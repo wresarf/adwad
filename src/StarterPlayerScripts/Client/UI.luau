@@ -1,7 +1,10 @@
 --!strict
 -- Tiny UI toolkit: instance factory, rounded/stroked/gradient styling and button juice.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
+
+local PetModelBuilder = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PetModelBuilder"))
 
 local UI = {}
 
@@ -19,6 +22,8 @@ UI.Colors = {
 	Orange = Color3.fromRGB(255, 150, 50),
 	Pink = Color3.fromRGB(255, 110, 180),
 	Stroke = Color3.fromRGB(20, 16, 40),
+	Locked = Color3.fromRGB(110, 90, 100),
+	Dark = Color3.fromRGB(20, 18, 38),
 }
 
 function UI.new(className: string, props: { [string]: any }?, children: { Instance }?): any
@@ -155,6 +160,64 @@ function UI.pop(obj: GuiObject)
 	local scale = obj:FindFirstChildOfClass("UIScale") or UI.new("UIScale", { Parent = obj })
 	scale.Scale = 0.6
 	UI.tween(scale, 0.35, { Scale = 1 }, Enum.EasingStyle.Back)
+end
+
+function UI.progressBar(parent: Instance, size: UDim2, pos: UDim2, color: Color3): (Frame, Frame, TextLabel)
+	local bar = UI.new("Frame", { Size = size, Position = pos, BackgroundColor3 = UI.Colors.Dark, BorderSizePixel = 0, Parent = parent })
+	UI.corner(bar, 8)
+	UI.stroke(bar, nil, 2)
+	local fill = UI.new("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = color, BorderSizePixel = 0, Parent = bar })
+	UI.corner(fill, 8)
+	UI.gradient(fill, Color3.new(1, 1, 1), Color3.fromRGB(200, 200, 200))
+	local label = UI.label(bar, "", UDim2.new(1, -8, 1, -4), UDim2.fromOffset(4, 2), UI.Colors.Text, { ZIndex = (bar.ZIndex or 1) + 1 })
+	return bar, fill, label
+end
+
+function UI.setProgress(fill: Frame, alpha: number)
+	local a = if alpha ~= alpha then 0 else math.clamp(alpha, 0, 1)
+	fill.Size = UDim2.fromScale(a, 1)
+	fill.Visible = a > 0.001
+end
+
+-- A ViewportFrame showing a procedurally built pet. `silhouette` blacks it out (Index).
+function UI.petViewport(parent: Instance, rec: { species: string, material: string?, size: string? }, size: UDim2, pos: UDim2, silhouette: boolean?): ViewportFrame
+	local vp = UI.new("ViewportFrame", {
+		Size = size,
+		Position = pos,
+		BackgroundTransparency = 1,
+		Ambient = Color3.fromRGB(170, 170, 190),
+		LightColor = Color3.fromRGB(255, 255, 245),
+		LightDirection = Vector3.new(-0.6, -1, -0.8),
+		Parent = parent,
+	})
+	-- Size is normalised so every pet fills the frame; mutations still show their material.
+	local model, height = PetModelBuilder.build(rec.species, rec.material or "Normal", "Normal", CFrame.new())
+	for _, d in model:GetDescendants() do
+		if d:IsA("ParticleEmitter") or d:IsA("PointLight") then
+			d:Destroy()
+		elseif silhouette and d:IsA("BasePart") then
+			d.Color = Color3.fromRGB(15, 12, 30)
+			d.Material = Enum.Material.SmoothPlastic
+			d.Transparency = 0
+			d.Reflectance = 0
+		end
+	end
+	model.Parent = vp
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = 40
+	local target = Vector3.new(0, height * 0.42, 0)
+	camera.CFrame = CFrame.lookAt(target + Vector3.new(height * 0.9, height * 0.35, -height * 1.6), target)
+	camera.Parent = vp
+	vp.CurrentCamera = camera
+	return vp
+end
+
+-- Full-screen colour flash (rare catches, rewards).
+function UI.flash(parent: Instance, color: Color3, strength: number?)
+	local f = UI.new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = color, BackgroundTransparency = 1 - (strength or 0.5), BorderSizePixel = 0, ZIndex = 40, Parent = parent })
+	UI.tween(f, 0.6, { BackgroundTransparency = 1 }).Completed:Connect(function()
+		f:Destroy()
+	end)
 end
 
 return UI

@@ -18,6 +18,9 @@ export type Biome = {
 	material: Enum.Material,
 	cravings: { string },
 	description: string,
+	reward: number, -- coins for the first landing in this zone
+	fogColor: Color3, -- client atmosphere tint while the camera is over this biome
+	fogDensity: number,
 }
 
 local BiomeConfig = {}
@@ -38,6 +41,9 @@ BiomeConfig.Biomes = {
 		material = Enum.Material.Grass,
 		cravings = { "Berry", "Meat" },
 		description = "Calm breeze, normal gravity",
+		reward = 0,
+		fogColor = Color3.fromRGB(200, 225, 255),
+		fogDensity = 0.26,
 	},
 	{
 		id = "Dunes",
@@ -53,6 +59,9 @@ BiomeConfig.Biomes = {
 		material = Enum.Material.Sand,
 		cravings = { "Meat", "Spicy" },
 		description = "Warm tailwind (+8%)",
+		reward = 150,
+		fogColor = Color3.fromRGB(255, 215, 160),
+		fogDensity = 0.3,
 	},
 	{
 		id = "Tundra",
@@ -68,6 +77,9 @@ BiomeConfig.Biomes = {
 		material = Enum.Material.Snow,
 		cravings = { "Berry", "Spicy" },
 		description = "Icy headwind (-12%), heavy air",
+		reward = 800,
+		fogColor = Color3.fromRGB(230, 240, 255),
+		fogDensity = 0.38,
 	},
 	{
 		id = "Volcano",
@@ -83,6 +95,9 @@ BiomeConfig.Biomes = {
 		material = Enum.Material.Basalt,
 		cravings = { "Spicy", "Meat" },
 		description = "Lava updrafts (+15%)",
+		reward = 3000,
+		fogColor = Color3.fromRGB(255, 120, 70),
+		fogDensity = 0.36,
 	},
 	{
 		id = "Swamp",
@@ -98,6 +113,9 @@ BiomeConfig.Biomes = {
 		material = Enum.Material.Mud,
 		cravings = { "Berry", "Cosmic" },
 		description = "Thick fumes (-5%), light gravity",
+		reward = 10000,
+		fogColor = Color3.fromRGB(140, 200, 90),
+		fogDensity = 0.42,
 	},
 	{
 		id = "Nuclear",
@@ -113,6 +131,9 @@ BiomeConfig.Biomes = {
 		material = Enum.Material.Slate,
 		cravings = { "Cosmic", "Spicy", "Meat" },
 		description = "Radioactive gusts, 0.7x gravity",
+		reward = 30000,
+		fogColor = Color3.fromRGB(200, 255, 90),
+		fogDensity = 0.4,
 	},
 } :: { Biome }
 
@@ -120,8 +141,8 @@ BiomeConfig.Biomes = {
 BiomeConfig.SpaceDistance = 2500
 BiomeConfig.MoonDistance = 3600
 BiomeConfig.Celestial = {
-	Space = { id = "Space", name = "Outer Space", color = Color3.fromRGB(40, 30, 90), cravings = { "Cosmic" } },
-	Moon = { id = "Moon", name = "The Moon", color = Color3.fromRGB(200, 200, 215), cravings = { "Cosmic" } },
+	Space = { id = "Space", name = "Outer Space", color = Color3.fromRGB(40, 30, 90), cravings = { "Cosmic" }, reward = 75000 },
+	Moon = { id = "Moon", name = "The Moon", color = Color3.fromRGB(200, 200, 215), cravings = { "Cosmic" }, reward = 200000 },
 }
 
 function BiomeConfig.get(id: string?): Biome?
@@ -151,6 +172,24 @@ function BiomeConfig.allCravingZones(): { string }
 	table.insert(list, "Space")
 	table.insert(list, "Moon")
 	return list
+end
+
+function BiomeConfig.zoneName(zoneId: string?): string
+	local b = BiomeConfig.get(zoneId)
+	if b then
+		return b.name
+	end
+	local c = if zoneId then (BiomeConfig.Celestial :: any)[zoneId] else nil
+	return if c then c.name else (zoneId or "?")
+end
+
+function BiomeConfig.zoneReward(zoneId: string): number
+	local b = BiomeConfig.get(zoneId)
+	if b then
+		return b.reward
+	end
+	local c = (BiomeConfig.Celestial :: any)[zoneId]
+	return if c then c.reward else 0
 end
 
 function BiomeConfig.cravingOptions(zoneId: string): { string }

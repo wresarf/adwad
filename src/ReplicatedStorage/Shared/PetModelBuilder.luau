@@ -68,10 +68,14 @@ local function ball(ctx: Ctx, name: string, d: number, x: number, y: number, z: 
 	return add(ctx, name, Enum.PartType.Ball, Vector3.new(d, d, d), CFrame.new(x, y, z), color, keep)
 end
 
+local CHEEK = Color3.fromRGB(255, 140, 170)
+
 local function eyes(ctx: Ctx, y: number, z: number, spread: number, d: number)
 	for _, side in { -1, 1 } do
 		ball(ctx, "Eye", d, side * spread, y, z, BLACK, true)
 		ball(ctx, "Shine", d * 0.35, side * spread + d * 0.15, y + d * 0.2, z - d * 0.35, WHITE, true)
+		local cheek = ball(ctx, "Cheek", d * 0.75, side * (spread + d * 0.75), y - d * 1.1, z + d * 0.15, CHEEK, true)
+		cheek.Transparency = 0.25
 	end
 end
 

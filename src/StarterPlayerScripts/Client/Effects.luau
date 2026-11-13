@@ -18,11 +18,15 @@ local PetConfig = require(Config:WaitForChild("PetConfig"))
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local PetModelBuilder = require(Shared:WaitForChild("PetModelBuilder"))
+local GameMath = require(Shared:WaitForChild("GameMath"))
 
 local Effects = {}
 Effects.__index = Effects
+Effects.BaseFov = 70
 
-type Sequence = { cancelled: boolean, cleanups: { () -> () }, finished: boolean }
+-- `blocking` sequences own the camera (followed throws, cutscenes): input such as E or
+-- Space skips them. Background flights (auto-throws, short throws) are non-blocking.
+type Sequence = { cancelled: boolean, cleanups: { () -> () }, finished: boolean, blocking: boolean }
 
 local function tween(obj: Instance, t: number, props: { [string]: any }, style: Enum.EasingStyle?)
 	local tw = TweenService:Create(obj, TweenInfo.new(t, style or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props)
@@ -80,18 +84,29 @@ function Effects.new(hud: any, getState: () -> any)
 	self.baseAtmosphereColor = self.atmosphere.Color
 	self.weatherPart = nil :: Part?
 	self.weatherConn = nil :: RBXScriptConnection?
+	self.weatherColor = nil :: Color3?
+	self.sunRays = Instance.new("SunRaysEffect")
+	self.sunRays.Name = "SnackSunRays"
+	self.sunRays.Intensity = 0.06
+	self.sunRays.Spread = 0.6
+	self.sunRays.Parent = Lighting
+	self.guide = nil :: any
+	self.held = nil :: Part?
+	self.bestMarker = nil :: Model?
+	self.bestMarkerDistance = 0
 	return self
 end
 
 ------------------------------------------------------------------ sequences
 
 function Effects:isPlaying(): boolean
-	return self.seq ~= nil
+	local seq = self.seq
+	return seq ~= nil and seq.blocking
 end
 
-function Effects:_begin(): Sequence
+function Effects:_begin(blocking: boolean): Sequence
 	self:skip()
-	local seq: Sequence = { cancelled = false, cleanups = {}, finished = false }
+	local seq: Sequence = { cancelled = false, cleanups = {}, finished = false, blocking = blocking }
 	self.seq = seq
 	return seq
 end
@@ -139,7 +154,7 @@ local function takeCamera(seq: Sequence): Camera?
 		return nil
 	end
 	local prevType = camera.CameraType
-	local prevFov = camera.FieldOfView
+	local prevFov = Effects.BaseFov -- never restore a mid-tween (punched) FOV
 	camera.CameraType = Enum.CameraType.Scriptable
 	table.insert(seq.cleanups, function()
 		camera.FieldOfView = prevFov
@@ -153,11 +168,15 @@ local function takeCamera(seq: Sequence): Camera?
 	return camera
 end
 
-local function bind(seq: Sequence, fn: (dt: number) -> ())
+-- Binds a per-frame updater to the sequence. Returns a function that stops it early
+-- (each phase must stop before the next one takes over the camera).
+local function bind(seq: Sequence, fn: (dt: number) -> ()): () -> ()
 	local conn = RunService.RenderStepped:Connect(fn)
-	table.insert(seq.cleanups, function()
+	local function stop()
 		conn:Disconnect()
-	end)
+	end
+	table.insert(seq.cleanups, stop)
+	return stop
 end
 
 ------------------------------------------------------------------ throw visuals
@@ -261,9 +280,230 @@ function Effects:_spawnCaughtPet(payload: any, position: Vector3): Model?
 	return model
 end
 
+-- Glowing beacon + distance label where a snack landed (stays a few seconds).
+function Effects:_landingBeacon(position: Vector3, payload: any)
+	local color = (GameConfig.RarityColors :: any)[payload.rarity] or Color3.new(1, 1, 1)
+	local beam = localPart(self.folder, Enum.PartType.Cylinder, Vector3.new(90, 2.2, 2.2), CFrame.new(position + Vector3.new(0, 45, 0)) * CFrame.Angles(0, 0, math.pi / 2), color, Enum.Material.Neon)
+	beam.Transparency = 0.35
+	beam.Name = "LandingBeacon"
+	local ring = localPart(self.folder, Enum.PartType.Cylinder, Vector3.new(0.2, 9, 9), CFrame.new(position + Vector3.new(0, 0.25, 0)) * CFrame.Angles(0, 0, math.pi / 2), color, Enum.Material.Neon)
+	ring.Transparency = 0.3
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(200, 50)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 12, 0)
+	gui.AlwaysOnTop = true
+	gui.LightInfluence = 0
+	gui.MaxDistance = 4000
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.fromScale(1, 1)
+	l.BackgroundTransparency = 1
+	l.Font = Enum.Font.FredokaOne
+	l.TextScaled = true
+	l.TextStrokeTransparency = 0
+	l.TextColor3 = Color3.new(1, 1, 1)
+	l.Text = string.format("%dm%s", math.floor(payload.distance or 0), if payload.sweetSpot then " SWEET!" else "")
+	l.Parent = gui
+	gui.Parent = ring
+	tween(beam, 3.5, { Transparency = 1, Size = Vector3.new(90, 0.4, 0.4) }, Enum.EasingStyle.Sine)
+	task.delay(3.6, function()
+		beam:Destroy()
+		ring:Destroy()
+	end)
+end
+
+-- Persistent flag at the player's best distance.
+function Effects:setBestDistance(distance: number)
+	if distance <= 0 or math.abs(distance - self.bestMarkerDistance) < 1 then
+		return
+	end
+	self.bestMarkerDistance = distance
+	if self.bestMarker then
+		self.bestMarker:Destroy()
+	end
+	local shown = math.min(distance, BiomeConfig.SpaceDistance - 5)
+	local model = Instance.new("Model")
+	model.Name = "BestThrowFlag"
+	local base = Vector3.new(BiomeConfig.Width / 2 - 30, 0, shown)
+	localPart(model, Enum.PartType.Block, Vector3.new(0.6, 18, 0.6), CFrame.new(base + Vector3.new(0, 9, 0)), Color3.fromRGB(240, 240, 240), Enum.Material.Metal)
+	local flag = localPart(model, Enum.PartType.Block, Vector3.new(0.3, 4, 7), CFrame.new(base + Vector3.new(0, 16, -3.6)), Color3.fromRGB(255, 200, 40), Enum.Material.Neon)
+	localPart(model, Enum.PartType.Block, Vector3.new(BiomeConfig.Width - 20, 0.15, 0.8), CFrame.new(0, 0.12, shown), Color3.fromRGB(255, 200, 40), Enum.Material.Neon).Transparency = 0.4
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(180, 44)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
+	gui.LightInfluence = 0
+	gui.MaxDistance = 600
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.fromScale(1, 1)
+	l.BackgroundTransparency = 1
+	l.Font = Enum.Font.FredokaOne
+	l.TextScaled = true
+	l.TextStrokeTransparency = 0
+	l.TextColor3 = Color3.fromRGB(255, 220, 80)
+	l.Text = "YOUR BEST " .. math.floor(distance) .. "m"
+	l.Parent = gui
+	gui.Parent = flag
+	model.Parent = self.folder
+	self.bestMarker = model
+end
+
+-- The snack grows in the player's hand while charging (local only).
+function Effects:setCharging(charge: number?, foodId: string?)
+	if charge == nil then
+		if self.held then
+			self.held:Destroy()
+			self.held = nil :: any
+		end
+		return
+	end
+	local character = Players.LocalPlayer.Character
+	local hand = character and (character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm"))
+	if not (hand and hand:IsA("BasePart")) then
+		return
+	end
+	if not self.held then
+		self.held = self:_foodPart(self.folder, foodId)
+	end
+	local held = self.held :: Part
+	local grow = 0.7 + charge * 0.6
+	held.CFrame = hand.CFrame * CFrame.new(0, -hand.Size.Y / 2 - 0.4, 0) * CFrame.Angles(os.clock() * 4, 0, 0)
+	local base = if held.Shape == Enum.PartType.Cylinder then Vector3.new(2.6, 1.3, 1.3) else Vector3.new(1.6, 1.6, 1.6)
+	held.Size = base * grow
+	local light = held:FindFirstChildOfClass("PointLight")
+	if light then
+		light.Brightness = if GameMath.isSweetSpot(charge) then 4 else 1
+		light.Range = if GameMath.isSweetSpot(charge) then 16 else 8
+	end
+end
+
+-- Brief FOV kick + shake when a throw is released.
+function Effects:punch(strength: number)
+	local camera = Workspace.CurrentCamera
+	if not camera or self:isPlaying() then
+		return
+	end
+	local fov = Effects.BaseFov
+	camera.FieldOfView = fov + 6 * strength
+	tween(camera, 0.35, { FieldOfView = fov }, Enum.EasingStyle.Quad)
+	local humanoid = Players.LocalPlayer.Character and Players.LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid and strength >= 1 then
+		local start = os.clock()
+		local conn: RBXScriptConnection
+		conn = RunService.RenderStepped:Connect(function()
+			local t = os.clock() - start
+			if t > 0.25 or not humanoid.Parent then
+				humanoid.CameraOffset = Vector3.zero
+				conn:Disconnect()
+				return
+			end
+			local m = (0.25 - t) * 1.6 * strength
+			humanoid.CameraOffset = Vector3.new(math.random() - 0.5, math.random() - 0.5, 0) * m
+		end)
+	end
+end
+
+-- Floating "+N" above the character when training.
+function Effects:trainPop(amount: number, boosted: boolean)
+	local character = Players.LocalPlayer.Character
+	local head = character and character:FindFirstChild("Head")
+	if not (head and head:IsA("BasePart")) then
+		return
+	end
+	local gui = Instance.new("BillboardGui")
+	gui.Size = UDim2.fromOffset(110, 34)
+	gui.StudsOffsetWorldSpace = Vector3.new(math.random(-15, 15) / 10, 2.5, 0)
+	gui.LightInfluence = 0
+	gui.AlwaysOnTop = true
+	local l = Instance.new("TextLabel")
+	l.Size = UDim2.fromScale(1, 1)
+	l.BackgroundTransparency = 1
+	l.Font = Enum.Font.FredokaOne
+	l.TextScaled = true
+	l.TextStrokeTransparency = 0
+	l.TextColor3 = if boosted then Color3.fromRGB(255, 120, 200) else Color3.fromRGB(255, 120, 120)
+	l.Text = "+" .. tostring(amount) .. " 💪"
+	l.Parent = gui
+	gui.Adornee = head
+	gui.Parent = self.folder
+	tween(gui, 0.8, { StudsOffsetWorldSpace = gui.StudsOffsetWorldSpace + Vector3.new(0, 3, 0) })
+	tween(l, 0.8, { TextTransparency = 1, TextStrokeTransparency = 1 })
+	task.delay(0.85, function()
+		gui:Destroy()
+	end)
+end
+
+-- Guide beam from the character to a world target (quest focus). nil hides it.
+function Effects:setGuide(target: Vector3?, label: string?)
+	local g: any = self.guide
+	if target == nil then
+		if g then
+			g.folder:Destroy()
+			g.a0:Destroy() -- lives on the character, not in the folder
+			self.guide = nil :: any
+		end
+		return
+	end
+	if not g then
+		local folder = Instance.new("Folder")
+		folder.Name = "QuestGuide"
+		folder.Parent = self.folder
+		local anchor = localPart(folder, Enum.PartType.Ball, Vector3.one * 2, CFrame.new(target), Color3.fromRGB(255, 230, 90), Enum.Material.Neon)
+		anchor.Transparency = 0.2
+		local a1 = Instance.new("Attachment")
+		a1.Parent = anchor
+		local a0 = Instance.new("Attachment")
+		a0.Name = "GuideAttachment"
+		local beam = Instance.new("Beam")
+		beam.Attachment1 = a1
+		beam.Color = ColorSequence.new(Color3.fromRGB(255, 240, 120), Color3.fromRGB(255, 160, 60))
+		beam.Transparency = NumberSequence.new(0.2, 0.6)
+		beam.LightEmission = 1
+		beam.FaceCamera = true
+		beam.Width0 = 0.6
+		beam.Width1 = 1.4
+		beam.Segments = 20
+		beam.CurveSize0 = 0
+		beam.Parent = folder
+		local gui = Instance.new("BillboardGui")
+		gui.Size = UDim2.fromOffset(200, 46)
+		gui.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
+		gui.AlwaysOnTop = true
+		gui.LightInfluence = 0
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.fromScale(1, 1)
+		l.BackgroundTransparency = 1
+		l.Font = Enum.Font.FredokaOne
+		l.TextScaled = true
+		l.TextStrokeTransparency = 0
+		l.TextColor3 = Color3.fromRGB(255, 230, 90)
+		l.Parent = gui
+		gui.Parent = anchor
+		g = { folder = folder, anchor = anchor, a0 = a0, beam = beam, label = l, target = target }
+		self.guide = g
+	end
+	g.target = target
+	g.anchor.CFrame = CFrame.new(target + Vector3.new(0, 3 + math.sin(os.clock() * 3) * 0.6, 0))
+	local character = Players.LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if root and g.a0.Parent ~= root then
+		-- The old attachment is destroyed with the previous character after a respawn.
+		local moved = pcall(function()
+			g.a0.Parent = root
+		end)
+		if not moved then
+			g.a0 = Instance.new("Attachment")
+			g.a0.Name = "GuideAttachment"
+			g.a0.Parent = root
+		end
+	end
+	g.beam.Attachment0 = g.a0
+	g.beam.Enabled = root ~= nil and not self:isPlaying()
+	local dist = if root and root:IsA("BasePart") then math.floor((root.Position - target).Magnitude) else 0
+	g.label.Text = string.format("%s  %dm", label or "GO", dist)
+end
+
 -- Food arcs from the player to the landing spot. Camera follows on manual throws.
 function Effects:_flight(payload: any, follow: boolean)
-	local seq = self:_begin()
+	local seq = self:_begin(follow)
 	local character = Players.LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 	local startPos = if root then root.Position + Vector3.new(0, 3, 0) else Vector3.new(0, 5, -10)
@@ -285,7 +525,7 @@ function Effects:_flight(payload: any, follow: boolean)
 	end
 	local start = os.clock()
 	local landed = false
-	bind(seq, function()
+	local stopFlight = bind(seq, function()
 		local t = math.min((os.clock() - start) / duration, 1)
 		local pos = startPos:Lerp(landing, t) + Vector3.new(0, 4 * height * t * (1 - t), 0)
 		food.CFrame = CFrame.new(pos) * CFrame.Angles(t * 25, t * 17, 0)
@@ -301,9 +541,11 @@ function Effects:_flight(payload: any, follow: boolean)
 		while not landed and not seq.cancelled do
 			task.wait()
 		end
+		stopFlight()
 		local color = (FoodConfig.get(payload.foodId) or FoodConfig.Foods[1]).color
 		self:_burst(landing, color, if payload.rarityIndex and payload.rarityIndex >= 5 then 2 else 1)
 		self:_spawnCaughtPet(payload, landing)
+		self:_landingBeacon(landing, payload)
 		if not seq.cancelled then
 			food.Transparency = 1
 			if camera then
@@ -331,7 +573,7 @@ local function starField(parent: Instance, center: Vector3, radius: number, coun
 end
 
 function Effects:_cutscene(payload: any)
-	local seq = self:_begin()
+	local seq = self:_begin(true)
 	local kind = payload.cutscene
 	local camera = takeCamera(seq)
 	if not camera then
@@ -367,7 +609,7 @@ function Effects:_cutscene(payload: any)
 	local launchFrom = Vector3.new(0, 6, 0)
 	local launchTo = Vector3.new(0, 900, 1400)
 	local t0 = os.clock()
-	bind(seq, function()
+	local stopLaunch = bind(seq, function()
 		local t = math.min((os.clock() - t0) / 1.8, 1)
 		local pos = launchFrom:Lerp(launchTo, t * t)
 		food.CFrame = CFrame.new(pos) * CFrame.Angles(t * 30, 0, t * 20)
@@ -378,6 +620,7 @@ function Effects:_cutscene(payload: any)
 	if not wait(seq, 1.8) then
 		return
 	end
+	stopLaunch()
 
 	-- Phase 2: build the celestial set far above the map.
 	local base = Vector3.new(0, 6000, 9000)
@@ -442,15 +685,30 @@ function Effects:_cutscene(payload: any)
 end
 
 -- Entry point from GameClient for every CatchEffect payload.
+function Effects:celebrate(payload: any)
+	local idx = payload.rarityIndex or 1
+	if idx >= GameConfig.rarityIndex("Legendary") then
+		local color = (GameConfig.RarityColors :: any)[payload.rarity] or Color3.new(1, 1, 1)
+		self.hud:flash(color, if idx >= GameConfig.rarityIndex("Mythic") then 0.65 else 0.45)
+		self.hud:toast(string.format("%s CATCH!", string.upper(payload.rarity or "")), color)
+	end
+end
+
 function Effects:playCatch(payload: any)
+	task.delay(if payload.cutscene then 0 else 0.8, function()
+		self:celebrate(payload)
+	end)
 	local state: any = self.getState() or {}
 	local settings = state.settings or {}
 	local showFx = settings.ShowCutscenes ~= false
-	if payload.cutscene and showFx then
+	-- Auto-throws never take over the camera with a cutscene (they repeat every few seconds).
+	if payload.cutscene and showFx and payload.manual ~= true then
+		self.hud:toast(string.format("Auto-Throw reached %s!", if payload.cutscene == "moon" then "the Moon" else "Space"), Color3.fromRGB(170, 100, 255))
+	elseif payload.cutscene and showFx then
 		local threshold = settings.AutoSkipRarity or "Off"
 		local autoSkip = threshold ~= "Off" and (payload.rarityIndex or 1) < GameConfig.rarityIndex(threshold)
 		if autoSkip then
-			self.hud:toast(string.format("%s cutscene auto-skipped (below %s)", payload.cutscene == "moon" and "Moon" or "Space", threshold))
+			self.hud:toast(string.format("%s cutscene auto-skipped (below %s)", if payload.cutscene == "moon" then "Moon" else "Space", threshold), Color3.fromRGB(110, 110, 160))
 		else
 			task.spawn(function()
 				self:_cutscene(payload)
@@ -459,8 +717,8 @@ function Effects:playCatch(payload: any)
 			return
 		end
 	end
-	local follow = showFx and payload.manual == true and (payload.distance or 0) > 120 and not self.seq
-	if payload.manual or not self.seq then
+	local follow = showFx and payload.manual == true and (payload.distance or 0) > 120 and not self:isPlaying()
+	if payload.manual or not self:isPlaying() then
 		self:_flight(payload, follow)
 	end
 	self.hud:showCatch(payload)
@@ -478,17 +736,12 @@ function Effects:setWeather(w: any)
 		self.weatherConn = nil :: any
 	end
 	local def = if w and w.active then GameConfig.getWeather(w.id) else nil
+	self.weatherColor = if def then def.color else nil
 	if not def then
 		tween(self.tint, 2, { TintColor = Color3.new(1, 1, 1), Saturation = 0.1, Contrast = 0.05 })
-		if self.atmosphere then
-			tween(self.atmosphere, 2, { Color = self.baseAtmosphereColor })
-		end
 		return
 	end
 	tween(self.tint, 2, { TintColor = Color3.new(1, 1, 1):Lerp(def.color, 0.25), Saturation = 0.3, Contrast = 0.1 })
-	if self.atmosphere then
-		tween(self.atmosphere, 2, { Color = self.baseAtmosphereColor:Lerp(def.color, 0.5) })
-	end
 	local part = localPart(self.folder, Enum.PartType.Block, Vector3.new(160, 1, 160), CFrame.new(), Color3.new(1, 1, 1))
 	part.Transparency = 1
 	part.Name = "WeatherEmitter"
@@ -569,16 +822,38 @@ function Effects:startAmbient()
 				model:PivotTo(base * CFrame.new(0, math.sin(now * 2 + phase) * 0.35 + 0.35, 0) * CFrame.Angles(0, math.sin(now * 0.8 + phase) * 0.25, 0))
 			end
 		end
+		self:_updateAmbience(camPos)
 		-- Rainbow material cycles through the spectrum.
 		local hue = (now * 0.25) % 1
 		for _, m in CollectionService:GetTagged("RainbowPet") do
 			for _, p in m:GetDescendants() do
-				if p:IsA("BasePart") and p.Name ~= "Eye" and p.Name ~= "Shine" and p.Name ~= "Nose" then
+				if p:IsA("BasePart") and p.Name ~= "Eye" and p.Name ~= "Shine" and p.Name ~= "Nose" and p.Name ~= "Cheek" then
 					p.Color = Color3.fromHSV((hue + p.Position.Y * 0.03) % 1, 0.75, 1)
 				end
 			end
 		end
 	end))
+end
+
+-- Atmosphere follows the biome under the camera, blended with the active weather colour.
+function Effects:_updateAmbience(camPos: Vector3)
+	local a = self.atmosphere
+	if not a or self:isPlaying() then
+		return
+	end
+	local color = self.baseAtmosphereColor
+	local density = 0.28
+	if camPos.Z > 0 then
+		local biome = BiomeConfig.biomeAtDistance(camPos.Z)
+		color = biome.fogColor
+		density = biome.fogDensity
+	end
+	if self.weatherColor then
+		color = color:Lerp(self.weatherColor, 0.45)
+		density += 0.05
+	end
+	a.Color = a.Color:Lerp(color, 0.08)
+	a.Density = a.Density + (density - a.Density) * 0.08
 end
 
 function Effects:destroy()
@@ -593,6 +868,7 @@ function Effects:destroy()
 	self.folder:Destroy()
 	self.tint:Destroy()
 	self.bloom:Destroy()
+	self.sunRays:Destroy()
 end
 
 return Effects

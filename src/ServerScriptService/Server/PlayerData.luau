@@ -8,13 +8,27 @@ local GameConfig = require(Config:WaitForChild("GameConfig"))
 local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
 local MutationConfig = require(Config:WaitForChild("MutationConfig"))
+local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
+local QuestConfig = require(Config:WaitForChild("QuestConfig"))
 
 export type Settings = {
 	AutoThrow: boolean,
 	AutoSkipRarity: string, -- rarity name or "Off"
 	KeepMutated: boolean,
 	ShowCutscenes: boolean,
+	ShowGuide: boolean,
 	AutoSellRarity: string, -- rarity name or "Off"
+}
+
+-- Lifetime counters used by quests (Shared/Progression.statValue).
+export type Stats = {
+	trains: number,
+	sweetSpots: number,
+	cravingMatches: number,
+	bestStreak: number,
+	mutations: number,
+	fusions: number,
+	bestRarity: number,
 }
 
 export type Data = {
@@ -31,9 +45,15 @@ export type Data = {
 	nextUid: number,
 	discovered: { [string]: boolean },
 	settings: Settings,
+	stats: Stats,
+	questIndex: number,
+	zonesReached: { [string]: boolean },
+	lastOnline: number, -- os.time() of the last save, for offline earnings
 }
 
 local PlayerData = {}
+
+PlayerData.StatKeys = { "trains", "sweetSpots", "cravingMatches", "bestStreak", "mutations", "fusions", "bestRarity" }
 
 function PlayerData.defaults(): Data
 	return {
@@ -54,8 +74,21 @@ function PlayerData.defaults(): Data
 			AutoSkipRarity = "Epic",
 			KeepMutated = true,
 			ShowCutscenes = true,
+			ShowGuide = true,
 			AutoSellRarity = "Off",
 		},
+		stats = {
+			trains = 0,
+			sweetSpots = 0,
+			cravingMatches = 0,
+			bestStreak = 0,
+			mutations = 0,
+			fusions = 0,
+			bestRarity = 0,
+		},
+		questIndex = 1,
+		zonesReached = {},
+		lastOnline = 0,
 	}
 end
 
@@ -144,9 +177,41 @@ function PlayerData.sanitize(raw: any): Data
 		if type(s.ShowCutscenes) == "boolean" then
 			d.settings.ShowCutscenes = s.ShowCutscenes
 		end
+		if type(s.ShowGuide) == "boolean" then
+			d.settings.ShowGuide = s.ShowGuide
+		end
 		if PlayerData.isRarityOrOff(s.AutoSellRarity) then
 			d.settings.AutoSellRarity = s.AutoSellRarity
 		end
+	end
+
+	-- v2 fields (absent in v1 saves, which simply start the quest line from the top).
+	if type(raw.stats) == "table" then
+		for _, key in PlayerData.StatKeys do
+			(d.stats :: any)[key] = math.floor(num(raw.stats[key], 0, 0, 1e12))
+		end
+	end
+	d.stats.bestRarity = math.min(d.stats.bestRarity, #GameConfig.Rarities)
+	d.questIndex = math.floor(num(raw.questIndex, 1, 1, #QuestConfig.Quests + 1))
+	d.lastOnline = math.floor(num(raw.lastOnline, 0, 0, 1e11))
+	if type(raw.zonesReached) == "table" then
+		for _, zone in BiomeConfig.allCravingZones() do
+			if raw.zonesReached[zone] == true then
+				d.zonesReached[zone] = true
+			end
+		end
+	end
+	-- Zones already passed (e.g. v1 saves) never pay their first-landing reward again.
+	for _, b in BiomeConfig.Biomes do
+		if d.bestDistance > b.startDistance then
+			d.zonesReached[b.id] = true
+		end
+	end
+	if d.bestDistance >= BiomeConfig.SpaceDistance then
+		d.zonesReached.Space = true
+	end
+	if d.bestDistance >= BiomeConfig.MoonDistance then
+		d.zonesReached.Moon = true
 	end
 	return d
 end

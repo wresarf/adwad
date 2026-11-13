@@ -40,6 +40,7 @@ RemoteContract.Settings = {
 	AutoSkipRarity = "rarityOrOff",
 	KeepMutated = "boolean",
 	ShowCutscenes = "boolean",
+	ShowGuide = "boolean",
 }
 
 return RemoteContract

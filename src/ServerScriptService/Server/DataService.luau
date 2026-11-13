@@ -65,6 +65,7 @@ function DataService.save(userId: number, data: PlayerData.Data): boolean
 	end
 	local payload = table.clone(data)
 	payload.version = GameConfig.DataVersion
+	payload.lastOnline = os.time()
 	for attempt = 1, MAX_ATTEMPTS do
 		local ok, err = pcall(function()
 			ds:UpdateAsync(key(userId), function()

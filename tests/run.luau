@@ -45,7 +45,9 @@ local BiomeConfig = req(Cfg.BiomeConfig)
 local PetConfig = req(Cfg.PetConfig)
 local MutationConfig = req(Cfg.MutationConfig)
 local FoodConfig = req(Cfg.FoodConfig)
+local QuestConfig = req(Cfg.QuestConfig)
 local GameMath = req(RS.Shared.GameMath)
+local Progression = req(RS.Shared.Progression)
 local RemoteContract = req(RS.Shared.RemoteContract)
 local Server = SSS.Server
 local serverSrc = SSS.GameServer.Source
@@ -67,8 +69,52 @@ test("place file is non-empty and deserializes", function()
 	ok(Runtime.bytes > 10000, "place too small")
 end)
 test("required modules exist in ReplicatedStorage/Config", function()
-	for _, n in { "BiomeConfig", "PetConfig", "MutationConfig", "FoodConfig" } do
+	for _, n in { "BiomeConfig", "PetConfig", "MutationConfig", "FoodConfig", "GameConfig", "QuestConfig" } do
 		eq(Cfg:FindFirstChild(n).ClassName, "ModuleScript", n)
+	end
+end)
+test("full script hierarchy is packed into the single place file", function()
+	local expected = {
+		{ SSS, "GameServer", "Script" },
+		{ SSS.Server, "WorldBuilder", "ModuleScript" },
+		{ SSS.Server, "PlotService", "ModuleScript" },
+		{ SSS.Server, "Inventory", "ModuleScript" },
+		{ SSS.Server, "PlayerData", "ModuleScript" },
+		{ SSS.Server, "DataService", "ModuleScript" },
+		{ SSS.Server, "WeatherService", "ModuleScript" },
+		{ SSS.Server, "RateLimiter", "ModuleScript" },
+		{ RS.Shared, "GameMath", "ModuleScript" },
+		{ RS.Shared, "Progression", "ModuleScript" },
+		{ RS.Shared, "PetModelBuilder", "ModuleScript" },
+		{ RS.Shared, "RemoteContract", "ModuleScript" },
+		{ SP.StarterPlayerScripts, "GameClient", "LocalScript" },
+		{ SP.StarterPlayerScripts.Client, "Hud", "ModuleScript" },
+		{ SP.StarterPlayerScripts.Client, "Panels", "ModuleScript" },
+		{ SP.StarterPlayerScripts.Client, "Effects", "ModuleScript" },
+		{ SP.StarterPlayerScripts.Client, "UI", "ModuleScript" },
+	}
+	for _, e in expected do
+		local inst = e[1]:FindFirstChild(e[2])
+		ok(inst, "missing " .. e[2])
+		eq(inst.ClassName, e[3], e[2])
+		ok(#inst.Source > 200, e[2] .. " has no source")
+	end
+end)
+test("no module defines the same function twice (guards against bad merges)", function()
+	for _, inst in game:GetDescendants() do
+		if inst:IsA("LuaSourceContainer") then
+			local seen = {}
+			for name in inst.Source:gmatch("\nfunction ([%w_%.:]+)%(") do
+				ok(not seen[name], inst.Name .. " defines " .. name .. " twice")
+				seen[name] = true
+			end
+		end
+	end
+end)
+test("client modules load headlessly (no top-level errors)", function()
+	local client = SP.StarterPlayerScripts.Client
+	for _, n in { "UI", "Panels", "Hud", "Effects" } do
+		ok(type(req(client[n])) == "table", n)
 	end
 end)
 test("GameServer is a Script and GameClient a LocalScript", function()
@@ -198,6 +244,27 @@ test("foods are valid and the starter food is free", function()
 	end
 end)
 
+test("quest line is valid and every stat is resolvable", function()
+	ok(#QuestConfig.Quests >= 20, "quest line too short")
+	local seen, lastTarget = {}, {}
+	local focuses = { ThrowLine = true, Gym = true, Shop = true, Pets = true, Index = true }
+	for i, q in QuestConfig.Quests do
+		ok(not seen[q.id], "duplicate quest " .. q.id)
+		seen[q.id] = true
+		ok(table.find(QuestConfig.Stats, q.stat), q.id .. " unknown stat " .. q.stat)
+		ok(q.target > 0 and q.reward > 0, q.id .. " target/reward")
+		ok(q.focus == nil or focuses[q.focus], q.id .. " focus")
+		ok(#q.hint > 10 and #q.title > 2, q.id .. " text")
+		if lastTarget[q.stat] then
+			ok(q.target > lastTarget[q.stat], q.id .. " must raise the bar for " .. q.stat)
+		end
+		lastTarget[q.stat] = q.target
+		local _ = i
+	end
+	eq(QuestConfig.Quests[1].stat, "trains", "onboarding starts with training")
+	eq(QuestConfig.Quests[2].stat, "throws", "then throwing")
+end)
+
 print("\n[game math]")
 test("charge meter is a 0->1->0 triangle wave", function()
 	near(GameMath.chargeAt(0), 0, 1e-9)
@@ -265,6 +332,67 @@ test("material/size roll rates match configured odds (Monte Carlo)", function()
 	eq(GameMath.rollMaterial(function()
 		return 0.49
 	end, 1e9), "Rainbow", "luck is capped at MaxChance but best tier wins")
+end)
+
+print("\n[progression]")
+test("quests complete in order, pay rewards and cascade", function()
+	local d = req(Server.PlayerData).defaults()
+	local coins = d.coins
+	eq(#Progression.advanceQuests(d, 0), 0, "nothing done yet")
+	eq(Progression.questSnapshot(d, 0).id, "Train10")
+	d.stats.trains = 10
+	d.totalThrows = 1
+	local done = Progression.advanceQuests(d, 0)
+	eq(#done, 2, "train + first throw complete together")
+	eq(d.questIndex, 3)
+	eq(d.coins, coins + QuestConfig.Quests[1].reward + QuestConfig.Quests[2].reward)
+	local snap = Progression.questSnapshot(d, 0)
+	eq(snap.id, "Sweet1")
+	eq(snap.progress, 0)
+	d.questIndex = #QuestConfig.Quests + 1
+	eq(Progression.questSnapshot(d, 0), nil, "finished quest line has no snapshot")
+	eq(#Progression.advanceQuests(d, 0), 0)
+end)
+test("stat values map to save data", function()
+	local d = req(Server.PlayerData).defaults()
+	d.ownedFoods.MeatyBone = true
+	d.discovered = { Bunbun = true, Chirpy = true, MeadowPup = true }
+	d.bestDistance = 321
+	d.strength = 77
+	d.totalCatches = 9
+	eq(Progression.statValue("foods", d, 0), 2)
+	eq(Progression.statValue("discovered", d, 0), 3)
+	eq(Progression.statValue("distance", d, 0), 321)
+	eq(Progression.statValue("strength", d, 0), 77)
+	eq(Progression.statValue("catches", d, 0), 9)
+	eq(Progression.statValue("income", d, 42), 42)
+	eq(Progression.statValue("fusions", d, 0), 0)
+end)
+test("discovery rewards, offline earnings and zone rewards are bounded", function()
+	for _, p in PetConfig.Pets do
+		ok(Progression.discoveryReward(p.id) >= GameConfig.DiscoveryMinCoins, p.id)
+	end
+	eq(Progression.discoveryReward("Nope"), 0)
+	eq(Progression.offlineEarnings(100, GameConfig.OfflineMinSeconds - 1), 0, "short absences pay nothing")
+	eq(Progression.offlineEarnings(0, 5000), 0)
+	eq(Progression.offlineEarnings(100, 0 / 0), 0, "NaN-safe")
+	eq(Progression.offlineEarnings(100, 1000), math.floor(100 * 1000 * GameConfig.OfflineRate))
+	eq(Progression.offlineEarnings(100, 1e9), math.floor(100 * GameConfig.OfflineMaxSeconds * GameConfig.OfflineRate), "capped")
+	eq(BiomeConfig.zoneReward("Meadow"), 0, "the first zone is free")
+	local last = -1
+	for _, z in BiomeConfig.allCravingZones() do
+		ok(BiomeConfig.zoneReward(z) > last, "zone rewards grow: " .. z)
+		last = BiomeConfig.zoneReward(z)
+		ok(#BiomeConfig.zoneName(z) > 3)
+	end
+end)
+test("gym and throw line areas", function()
+	ok(Progression.inGym(GameConfig.GymCenter))
+	ok(not Progression.inGym(GameConfig.ThrowLineCenter), "gym is not at the throw line")
+	ok(Progression.nearThrowLine(GameConfig.ThrowLineCenter))
+	ok(not Progression.nearThrowLine(GameConfig.GymCenter), "can't throw from the gym")
+	ok(GameConfig.GymMultiplier > 1)
+	ok(serverSrc:find("Progression.inGym(pos)", 1, true), "server applies the gym bonus from the character position")
 end)
 
 print("\n[inventory]")
@@ -370,6 +498,25 @@ test("sanitize survives garbage and clamps values", function()
 	eq(d.settings.AutoThrow, false, "auto-throw needs unlock")
 	eq(d.settings.AutoSkipRarity, "Epic")
 end)
+test("v1 saves migrate to v2 without re-paying rewards", function()
+	local d = PlayerData.sanitize({ coins = 500, bestDistance = 900, strength = 4000, pets = {} })
+	eq(d.questIndex, 1)
+	eq(d.stats.trains, 0)
+	ok(d.zonesReached.Meadow and d.zonesReached.Dunes and d.zonesReached.Tundra and d.zonesReached.Volcano, "passed zones marked")
+	eq(d.zonesReached.Swamp, nil, "unreached zone still pays")
+	eq(d.settings.ShowGuide, true)
+	local v2 = PlayerData.sanitize({ questIndex = 7, lastOnline = 1700000000, zonesReached = { Swamp = true, Bogus = true }, stats = { trains = 55, fusions = 2, bestRarity = 99, mutations = -4 }, settings = { ShowGuide = false } })
+	eq(v2.questIndex, 7)
+	eq(v2.lastOnline, 1700000000)
+	ok(v2.zonesReached.Swamp)
+	eq(v2.zonesReached.Bogus, nil, "unknown zones dropped")
+	eq(v2.stats.trains, 55)
+	eq(v2.stats.bestRarity, #GameConfig.Rarities, "rarity index clamped")
+	eq(v2.stats.mutations, 0, "negative stats clamped")
+	eq(v2.settings.ShowGuide, false)
+	eq(PlayerData.sanitize({ questIndex = 1e9 }).questIndex, #QuestConfig.Quests + 1)
+	ok(Server.DataService.Source:find("payload.lastOnline = os.time()", 1, true), "saves record lastOnline")
+end)
 test("DataService degrades gracefully without DataStores", function()
 	local DataService = req(Server.DataService)
 	local d, canSave = DataService.load(1)
@@ -468,6 +615,49 @@ test("WorldBuilder generates hub, throw line, six biomes and six plots", functio
 	end
 	print("        (" .. world.partCount .. " parts generated)")
 end)
+test("hub stalls open real panels via ProximityPrompts (not on the throw key)", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local panelsSrc = SP.StarterPlayerScripts.Client.Panels.Source
+	local found = {}
+	for _, d in root:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			local panel = d:GetAttribute("OpenPanel")
+			ok(type(panel) == "string", "prompt without panel: " .. d:GetFullName())
+			ok(panelsSrc:find("self.frames." .. panel .. " =", 1, true), "prompt opens unknown panel " .. panel)
+			ok(d.KeyboardKeyCode ~= R.Enum.KeyCode.E, "prompt must not use the throw key")
+			found[panel] = true
+		end
+	end
+	ok(found.Shop and found.Pets and found.Index, "Shop, Pets and Index stalls")
+	ok(clientSrc:find("ProximityPromptService.PromptTriggered:Connect", 1, true), "client listens for prompts")
+	ok(root.SpawnHub.Gym.GymFloor, "gym floor")
+	local floor = root.SpawnHub.Gym.GymFloor.CFrame.Position
+	near(floor.X, GameConfig.GymCenter.X, 0.01, "gym floor matches GameConfig.GymCenter")
+	near(floor.Z, GameConfig.GymCenter.Z, 0.01, "gym floor matches GameConfig.GymCenter")
+	eq(#world.leaderboardLines, 6, "leaderboard rows")
+end)
+test("scenery stays out of the throw lane and the gym", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local half = BiomeConfig.Width / 2
+	local mountains = 0
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") and d.Name == "Mountain" then
+			mountains += 1
+			local cy = d.CFrame.Position.Y
+			local halfAtGround = d.Size.X * 0.7072 - math.abs(cy)
+			ok(math.abs(d.CFrame.Position.X) - halfAtGround >= half - 0.5, "mountain intrudes into the lane at x=" .. d.CFrame.Position.X)
+		end
+	end
+	ok(mountains > 40, "mountain backdrop")
+	for _, d in root.SpawnHub:GetChildren() do
+		if d:IsA("BasePart") and (d.Name == "Trunk" or d.Name == "Leaves") then
+			ok(not Progression.inGym(d.CFrame.Position), "tree inside the gym")
+		end
+	end
+	for _, b in BiomeConfig.Biomes do
+		ok(#root.Biomes[b.id]:GetChildren() > 5, b.id .. " has landmarks/decor")
+	end
+end)
 test("every species x material x size builds a pet model", function()
 	local Builder = req(RS.Shared.PetModelBuilder)
 	local n = 0
@@ -533,6 +723,7 @@ test("a fresh save progresses through every biome", function()
 	local streak, t = 0, 0
 	local reached = {}
 	local throwEvery, trainPerSec = 2, 5
+	local questAt = {}
 	local cravings = {}
 	for _, z in BiomeConfig.allCravingZones() do
 		cravings[z] = BiomeConfig.cravingOptions(z)[1]
@@ -542,12 +733,29 @@ test("a fresh save progresses through every biome", function()
 		d.coins += Inventory.totalIncome(d)
 		for _ = 1, trainPerSec do
 			d.strength += GameMath.trainGain(d.strength)
+			d.stats.trains += 1
 		end
 		if t % throwEvery == 0 then
 			local food = FoodConfig.get(d.equippedFood)
 			local r = GameMath.computeThrow({ strength = d.strength, foodPower = food.power, foodLuck = food.luck, foodCraving = food.craving, charge = if rng() < 0.5 then 0.95 else 0.8, allowSweetSpot = true, streak = streak, zoneCravings = cravings, weatherSizeLuck = 1, weatherMaterialLuck = 1, weatherCravingBonus = 1, rng = rng })
 			streak = r.streak
 			d.coins += r.bonusCoins
+			d.totalThrows += 1
+			d.stats.sweetSpots += if r.sweetSpot then 1 else 0
+			d.stats.cravingMatches += if r.cravingMatched then 1 else 0
+			d.stats.bestStreak = math.max(d.stats.bestStreak, r.streak)
+			if not d.zonesReached[r.zone] then
+				d.zonesReached[r.zone] = true
+				d.coins += BiomeConfig.zoneReward(r.zone)
+			end
+			if not d.discovered[r.species] then
+				d.coins += Progression.discoveryReward(r.species)
+			end
+			if GameMath.isMutated({ material = r.material, size = r.size }) then
+				d.stats.mutations += 1
+			end
+			local _, ri = GameMath.overallRarity({ species = r.species, material = r.material, size = r.size })
+			d.stats.bestRarity = math.max(d.stats.bestRarity, ri)
 			d.bestDistance = math.max(d.bestDistance, r.distance)
 			Inventory.catch(d, Inventory.newPet(d, r.species, r.material, r.size), 8)
 			if not reached[r.zone] then
@@ -562,8 +770,11 @@ test("a fresh save progresses through every biome", function()
 				d.equippedFood = f.id
 			end
 		end
+		for _, q in Progression.advanceQuests(d, Inventory.totalIncome(d)) do
+			questAt[q.id] = t
+		end
 		if t % 60 == 0 then
-			Inventory.fuseAll(d)
+			d.stats.fusions += Inventory.fuseAll(d)
 			Inventory.equipBest(d, 8)
 			d.settings.AutoSellRarity = "Uncommon"
 			Inventory.sellMatching(d)
@@ -573,6 +784,8 @@ test("a fresh save progresses through every biome", function()
 		ok(reached[b.id], "never reached " .. b.id)
 	end
 	ok(reached.Dunes < 10 * 60, "Dunes should be reached within 10 minutes")
+	print(string.format("        quests: %d/%d done (first 8 by %.1f min)", d.questIndex - 1, #QuestConfig.Quests, (questAt[QuestConfig.Quests[8].id] or 1e9) / 60))
+	ok(d.questIndex > 8, "onboarding quests are completable by a simple bot")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

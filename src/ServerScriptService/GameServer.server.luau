@@ -16,6 +16,7 @@ local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
 local GameMath = require(Shared:WaitForChild("GameMath"))
+local Progression = require(Shared:WaitForChild("Progression"))
 local RemoteContract = require(Shared:WaitForChild("RemoteContract"))
 
 local ServerModules = script.Parent:WaitForChild("Server")
@@ -116,6 +117,9 @@ local function buildState(s: Session, full: boolean): { [string]: any }
 		autoThrowUnlocked = d.autoThrowUnlocked,
 		equippedFood = d.equippedFood,
 		canSave = s.canSave,
+		quest = Progression.questSnapshot(d, s.income) or false, -- false = quest line finished
+		questsDone = math.max(0, d.questIndex - 1),
+		totalThrows = d.totalThrows,
 	}
 	if full then
 		state.ownedFoods = d.ownedFoods
@@ -125,8 +129,25 @@ local function buildState(s: Session, full: boolean): { [string]: any }
 		state.plotIndex = if s.plot then s.plot.index else nil
 		state.maxPets = GameConfig.MaxPets
 		state.slots = GameConfig.PlotPedestals
+		state.stats = d.stats
+		state.zonesReached = d.zonesReached
 	end
 	return state
+end
+
+local function notifyReward(s: Session, title: string, text: string, coins: number, color: string?)
+	CatchEffect:FireClient(s.player, { kind = "reward", title = title, text = text, coins = coins, color = color })
+end
+
+-- Pays out every quest that the player's current stats already satisfy.
+local function checkQuests(s: Session)
+	local done = Progression.advanceQuests(s.data, s.income)
+	for _, q in done do
+		notifyReward(s, "QUEST COMPLETE!", q.title, q.reward, "Gold")
+	end
+	if #done > 0 then
+		markFull(s)
+	end
 end
 
 local function sync(s: Session)
@@ -149,14 +170,18 @@ local function saveSession(s: Session): boolean
 	return ok
 end
 
-local function nearThrowLine(player: Player): boolean
+local function rootPosition(player: Player): Vector3?
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
-	if not (root and root:IsA("BasePart")) then
-		return false
+	if root and root:IsA("BasePart") then
+		return root.Position
 	end
-	local offset = root.Position - world.throwLineCenter
-	return Vector3.new(offset.X, 0, offset.Z).Magnitude <= GameConfig.ThrowLineRadius
+	return nil
+end
+
+local function nearThrowLine(player: Player): boolean
+	local pos = rootPosition(player)
+	return pos ~= nil and Progression.nearThrowLine(pos)
 end
 
 ------------------------------------------------------------------ throwing
@@ -188,6 +213,22 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 	s.lastThrow = os.clock()
 	d.totalThrows += 1
 	d.coins += result.bonusCoins
+	local stats = d.stats
+	if result.sweetSpot then
+		stats.sweetSpots += 1
+	end
+	if result.cravingMatched then
+		stats.cravingMatches += 1
+	end
+	stats.bestStreak = math.max(stats.bestStreak, result.streak)
+
+	-- First landing in a zone pays a one-off reward.
+	local zoneReward = 0
+	if not d.zonesReached[result.zone] then
+		d.zonesReached[result.zone] = true
+		zoneReward = BiomeConfig.zoneReward(result.zone)
+		d.coins += zoneReward
+	end
 	local newRecord = result.distance > d.bestDistance
 	if newRecord then
 		d.bestDistance = result.distance
@@ -199,8 +240,15 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 	end
 
 	local rec = Inventory.newPet(d, result.species, result.material, result.size)
+	local newSpecies = not d.discovered[rec.species]
+	local discoveryReward = if newSpecies then Progression.discoveryReward(rec.species) else 0
+	d.coins += discoveryReward
 	local outcome, soldFor = Inventory.catch(d, rec, GameConfig.PlotPedestals)
 	local rarity, rarityIndex = GameMath.overallRarity(rec)
+	if GameMath.isMutated(rec) then
+		stats.mutations += 1
+	end
+	stats.bestRarity = math.max(stats.bestRarity, rarityIndex)
 	if outcome == "kept" and rec.equipped then
 		refreshPlot(s)
 	end
@@ -235,6 +283,11 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 		unlockedAutoThrow = unlockedAuto,
 		cutscene = cutscene,
 		lateral = rng:NextNumber(-60, 60),
+		newSpecies = newSpecies,
+		discoveryReward = discoveryReward,
+		zoneFirst = zoneReward > 0,
+		zoneReward = zoneReward,
+		zoneName = BiomeConfig.zoneName(result.zone),
 	})
 end
 
@@ -285,7 +338,10 @@ local function onTrain(player: Player)
 		return
 	end
 	s.lastTrain = now
-	s.data.strength += GameMath.trainGain(s.data.strength)
+	local pos = rootPosition(player)
+	local mult = if pos and Progression.inGym(pos) then GameConfig.GymMultiplier else 1
+	s.data.strength += GameMath.trainGain(s.data.strength) * mult
+	s.data.stats.trains += 1
 	s.dirtyStats = true
 end
 
@@ -344,6 +400,7 @@ FusePets.OnServerInvoke = guard("FusePets", function(s, key: any)
 		if made == 0 then
 			return false, "No groups of 3 identical pets"
 		end
+		s.data.stats.fusions += made
 		refreshPlot(s)
 		markFull(s)
 		return true, string.format("Fused %d time%s!", made, if made == 1 then "" else "s")
@@ -352,6 +409,7 @@ FusePets.OnServerInvoke = guard("FusePets", function(s, key: any)
 	if not ok then
 		return false, res
 	end
+	s.data.stats.fusions += 1
 	refreshPlot(s)
 	markFull(s)
 	local pet = PetConfig.get(res.species)
@@ -452,8 +510,18 @@ local function onPlayerAdded(player: Player)
 	caught.Parent = leaderstats
 	leaderstats.Parent = player
 
+	-- Offline earnings only for real, loaded saves (never for fresh fallback data).
+	local offline = 0
+	if canSave and data.lastOnline > 0 then
+		offline = Progression.offlineEarnings(s.income, os.time() - data.lastOnline)
+		data.coins += offline
+	end
+	checkQuests(s)
 	sync(s)
 	WeatherEvent:FireClient(player, weather:snapshot())
+	if offline > 0 then
+		notifyReward(s, "WELCOME BACK!", "Your pets earned coins while you were away", offline, "Green")
+	end
 	if not canSave then
 		CatchEffect:FireClient(player, { notice = if DataService.isAvailable() then "Couldn't load your save - progress this session won't be saved." else "DataStores unavailable (Studio?) - progress won't be saved." })
 	end
@@ -506,13 +574,17 @@ task.spawn(function()
 	end
 end)
 
--- Batched state replication (at most 4x per second per player).
+-- Batched state replication (at most 4x per second per player). Quests are evaluated
+-- here because every stat change marks the session dirty.
 task.spawn(function()
 	while true do
 		task.wait(0.25)
 		for _, s in sessions do
 			if s.dirtyFull or s.dirtyStats then
-				local ok, err = pcall(sync :: any, s)
+				local ok, err = pcall(function()
+					checkQuests(s)
+					sync(s)
+				end)
 				if not ok then
 					warn("[SnackForce] sync failed:", err)
 				end
@@ -535,6 +607,24 @@ task.spawn(function()
 				end
 			end
 		end
+	end
+end)
+
+-- Hub leaderboard: best throws among players in this server.
+task.spawn(function()
+	while true do
+		local rows = {}
+		for player, s in sessions do
+			table.insert(rows, { name = player.DisplayName, best = s.data.bestDistance })
+		end
+		table.sort(rows, function(a, b)
+			return a.best > b.best
+		end)
+		for i, line in world.leaderboardLines do
+			local r = rows[i]
+			line.Text = if r then string.format("%d. %s  -  %sm", i, r.name, GameMath.formatNumber(r.best)) else string.format("%d. ---", i)
+		end
+		task.wait(GameConfig.LeaderboardInterval)
 	end
 end)
 

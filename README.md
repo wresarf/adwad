@@ -2,7 +2,7 @@
 
 A Roblox game where you throw snacks across six biomes. Wherever a snack lands, a pet comes to catch it, and you can roll rare **material** and **size** mutations. Everything is generated from primitive parts, with no Toolbox or external assets.
 
-**Playable file:** [`SnackForce_PetToss.rbxl`](SnackForce_PetToss.rbxl). Open it in Roblox Studio and press Play. DataStores only persist in a published place that has *Studio Access to API Services* enabled. Without that, the game stays fully playable and shows a "progress won't be saved" notice.
+**Playable file:** [`SnackForce_PetToss.rbxl`](SnackForce_PetToss.rbxl). This one binary contains the whole game: every script, config and remote. The world is generated at runtime from primitive parts. Open it in Roblox Studio and press Play. DataStores only persist in a published place that has *Studio Access to API Services* enabled. Without that, the game stays fully playable and shows a "progress won't be saved" notice.
 
 ## Build & test
 
@@ -10,11 +10,15 @@ A Roblox game where you throw snacks across six biomes. Wherever a snack lands, 
 # toolchain: rokit install   (or: mise use github:rojo-rbx/rojo@7.7.1 github:lune-org/lune@0.11.1)
 rojo build default.project.json -o SnackForce_PetToss.rbxl
 lune run tests/run.luau SnackForce_PetToss.rbxl   # offline tests against the built place
-# or both at once:
+./scripts/typecheck.sh                            # strict Luau type-check against the Roblox API (needs luau-lsp)
+# or everything at once (type-check runs when luau-lsp is installed):
 ./scripts/build.sh
+# dev tool: top-down SVG map of the generated world
+lune run tests/map.luau -300 300 -320 40 2 /tmp/hub.svg
 ```
 
 The Lune suite loads the **built place file** and runs its ModuleScripts headlessly. It covers:
+- the full script hierarchy packed into the place, and client modules loading headlessly
 - remote contracts (server and client source)
 - config integrity
 - the sweet-spot, combo and weather multipliers
@@ -22,18 +26,21 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 - fusion and auto-sell
 - save sanitising and rate limiting
 - the weather schedule
-- world generation, including Roblox part-size limits
+- quests, discovery and zone rewards, offline earnings, the Gym, and v1 to v2 save migration
+- world generation, including Roblox part-size limits, stall prompts and keeping scenery out of the throw lane
 - all 1,512 species × material × size pet models
 - plot assignment
-- a fresh-save progression simulation
+- a fresh-save progression simulation that also completes the quest line
 
 ## How to play
 
 | Action | Input |
 | --- | --- |
-| Charge + throw (at the Throw Line) | hold **E** or the **THROW** button, release in the green **SWEET** zone |
-| Train strength | **Q** or **TRAIN** |
+| Charge + throw (at the Throw Line) | hold **E** / **THROW** / **R2**, release in the green **SWEET** zone. The meter previews the distance and biome |
+| Train strength | hold **Q** / **TRAIN** / **X** (2× inside the Gym) |
 | Skip camera effect / cutscene | **Space**, **Enter** or **SKIP** |
+| Food Shop / Pets & Fuse / Pet Index / How to Play | **F** / **G** / **N** / **H**, the left menu, or **R** at the hub stalls |
+| Teleport | Throw Line, Gym or your Plot from the left menu |
 
 - **Sweet spot:** releasing in the green zone gives ×1.25 distance and ×1.35 mutation luck.
 - **Biomes:** Sunny Meadow → Sizzle Dunes → Frostbite Peaks → Magma Fields → Toxic Swamp → Nuclear Wasteland. Each biome's wind and gravity stretch or shrink the throw. Past 2,500 m the snack reaches **Space**, and past 3,600 m it reaches **the Moon**. Both play skippable cutscenes. Catches below your *auto-skip rarity* setting skip the cutscene automatically.
@@ -44,13 +51,17 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 - **Weather:** every 90 s, a 45 s event starts. **Titan Storm** gives 3× size luck, **Feast Frenzy** gives 2× craving bonus (the streak grows twice as fast and craving coins double), and **Prism Aurora** gives 4× material luck.
 - **Plots:** six plot pads, each with 8 pedestals. Equipped pets stand on them with labels and earn passive income.
 - **Auto-Throw:** unlocks once you reach the Toxic Swamp (1,250 m). It throws every 3.5 s at a fixed charge that never hits the sweet spot.
+- **Quests (onboarding):** a 23-step quest line, from *Warm Up* to *Moonshot*, teaches each mechanic in order and pays coins. A guide beam points to where the current quest happens; you can turn it off in Settings.
+- **Rewards:** your first landing in each zone pays a bonus, and so does the first catch of each species. You'll find both in the **Pet Index**. Your plot earns 25% of its income while you're offline, for up to 2 hours. The hub leaderboard shows the best throws on the server.
+- **Hub:** Strength Gym (2× training), Food Shop stall, Fusion Altar, Pet Index book, leaderboard, signposts, bunting and balloons. Each biome has its own landmarks: windmills and a rainbow arch, a pyramid and an oasis, an igloo and snowmen, a volcano with a lava river, giant glowing mushrooms, and cooling towers. Mountains line the lane, and the atmosphere changes colour with the biome and the weather.
+- **HUD:** scales to any screen size. Touch devices get a larger minimum size, and on small screens the cravings board collapses. You also get coin popups, reward banners, catch cards with a 3D pet preview, a landing beacon, a best-distance flag, and a welcome screen on your first session.
 
 ## Layout
 
 ```
 default.project.json             Rojo tree (Remotes are declared here so they exist before any script runs)
-src/ReplicatedStorage/Config     GameConfig, BiomeConfig, PetConfig, MutationConfig, FoodConfig
-src/ReplicatedStorage/Shared     GameMath (pure, authoritative math), PetModelBuilder, RemoteContract
+src/ReplicatedStorage/Config     GameConfig, BiomeConfig, PetConfig, MutationConfig, FoodConfig, QuestConfig
+src/ReplicatedStorage/Shared     GameMath (pure, authoritative math), Progression (quests/rewards), PetModelBuilder, RemoteContract
 src/ServerScriptService          GameServer + Server/ (WorldBuilder, PlotService, Inventory, PlayerData,
                                  DataService, WeatherService, RateLimiter)
 src/StarterPlayerScripts         GameClient + Client/ (Hud, Panels, Effects, UI)
@@ -63,5 +74,6 @@ tests/                           Lune runtime shim + test-suite
 - Throw charge comes from the **server's own timestamps** between Begin and Release, so a client cannot claim a perfect charge.
 - Each remote has its own token-bucket rate limit. Throws and training also have cooldowns.
 - All arguments are type-checked, length-checked and checked against the configs.
-- Manual throws require the character to be at the Throw Line.
+- Manual throws require the character to be at the Throw Line. The Gym bonus is checked against the server-side character position.
+- Quest, discovery, zone and offline rewards are all computed and paid by the server. No new remotes were added.
 - Saved data is sanitised on load: values are clamped, UIDs reassigned, and unknown pets and foods dropped. If a load fails, the player still gets a playable session, but the save is never overwritten.
