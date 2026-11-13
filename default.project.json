@@ -1,0 +1,70 @@
+{
+  "name": "SnackForce_PetToss",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Config": {
+        "$path": "src/ReplicatedStorage/Config"
+      },
+      "Shared": {
+        "$path": "src/ReplicatedStorage/Shared"
+      },
+      "Remotes": {
+        "$className": "Folder",
+        "ThrowFood": { "$className": "RemoteEvent" },
+        "TrainStrength": { "$className": "RemoteEvent" },
+        "BuyFood": { "$className": "RemoteFunction" },
+        "EquipBest": { "$className": "RemoteFunction" },
+        "FusePets": { "$className": "RemoteFunction" },
+        "AutoSell": { "$className": "RemoteFunction" },
+        "ToggleSetting": { "$className": "RemoteFunction" },
+        "StateSync": { "$className": "RemoteEvent" },
+        "CatchEffect": { "$className": "RemoteEvent" },
+        "WeatherEvent": { "$className": "RemoteEvent" }
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "GameServer": {
+        "$path": "src/ServerScriptService/GameServer.server.luau"
+      },
+      "Server": {
+        "$path": "src/ServerScriptService/Server"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$properties": {
+        "CameraMaxZoomDistance": 160
+      },
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "GameClient": {
+          "$path": "src/StarterPlayerScripts/GameClient.client.luau"
+        },
+        "Client": {
+          "$path": "src/StarterPlayerScripts/Client"
+        }
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$properties": {
+        "Gravity": 196.2
+      }
+    },
+    "Lighting": {
+      "$className": "Lighting",
+      "$properties": {
+        "Ambient": [0.45, 0.45, 0.5],
+        "OutdoorAmbient": [0.55, 0.55, 0.6],
+        "Brightness": 2.5,
+        "ClockTime": 14.5,
+        "GlobalShadows": true
+      }
+    },
+    "SoundService": { "$className": "SoundService" },
+    "Players": { "$className": "Players" }
+  }
+}
