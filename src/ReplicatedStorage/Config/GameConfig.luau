@@ -14,7 +14,7 @@ export type Weather = {
 local GameConfig = {}
 
 GameConfig.DataStoreName = "SnackForce_PetToss_v1"
-GameConfig.DataVersion = 2
+GameConfig.DataVersion = 3
 GameConfig.AutosaveInterval = 60
 
 -- Charge meter: a triangle wave 0 -> 1 -> 0 over ChargeCycle seconds.
@@ -106,6 +106,8 @@ GameConfig.RateLimits = {
 	FusePets = { rate = 4, burst = 6 },
 	AutoSell = { rate = 2, burst = 3 },
 	ToggleSetting = { rate = 5, burst = 8 },
+	StorePurchase = { rate = 2, burst = 4 },
+	HatchEgg = { rate = 3, burst = 5 },
 }
 
 GameConfig.Rarities = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret" }

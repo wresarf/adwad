@@ -16,6 +16,7 @@ local Config = ReplicatedStorage:WaitForChild("Config")
 local GameConfig = require(Config:WaitForChild("GameConfig"))
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local FoodConfig = require(Config:WaitForChild("FoodConfig"))
+local EggConfig = require(Config:WaitForChild("EggConfig"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameMath = require(Shared:WaitForChild("GameMath"))
 local Progression = require(Shared:WaitForChild("Progression"))
@@ -32,7 +33,7 @@ local StateSync = Remotes:WaitForChild("StateSync") :: RemoteEvent
 local CatchEffect = Remotes:WaitForChild("CatchEffect") :: RemoteEvent
 local WeatherEvent = Remotes:WaitForChild("WeatherEvent") :: RemoteEvent
 
-local INVOKABLE = { BuyFood = true, EquipBest = true, FusePets = true, AutoSell = true, ToggleSetting = true }
+local INVOKABLE = { BuyFood = true, EquipBest = true, FusePets = true, AutoSell = true, ToggleSetting = true, StorePurchase = true, HatchEgg = true }
 
 ------------------------------------------------------------------ state
 
@@ -48,13 +49,19 @@ local state: { [string]: any } = {
 	ownedFoods = { [FoodConfig.DefaultFood] = true },
 	pets = {},
 	discovered = {},
-	settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, AutoSellRarity = "Off" },
+	settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, ReduceMotion = false, AutoSellRarity = "Off" },
 	autoThrowUnlocked = false,
 	quest = nil,
 	questsDone = 0,
 	totalThrows = 0,
 	stats = {},
 	zonesReached = {},
+	gems = 0,
+	pawTokens = 0,
+	passes = {},
+	store = { passes = {}, products = {} },
+	coinRushEndsAt = 0,
+	incomeMult = 1,
 	loaded = false,
 }
 
@@ -153,12 +160,12 @@ end
 
 local function teleportPlot()
 	if not state.loaded then
-		hud:toast("Still loading your plot...", UI.Colors.Blue)
+		hud:toast("Still loading your plot", UI.Colors.Teal)
 		return
 	end
 	local idx = state.plotIndex
 	if not idx then
-		hud:toast("All plots are taken: your pets still earn coins!", UI.Colors.Orange)
+		hud:toast("All plots are taken. Your pets still earn coins", UI.Colors.Amber)
 		return
 	end
 	local pad = findWorld({ "Plots", "Plot" .. tostring(idx), "Pad" })
@@ -179,8 +186,7 @@ local function throwDown(input: InputObject?)
 		return
 	end
 	if not nearThrowLine() then
-		hud:toast("Walk to the Throw Line to throw! (or Teleport: Throw)", UI.Colors.Orange)
-		hud:pulse("ThrowLine")
+		hud:toast("Go to the Throw Line first", UI.Colors.Amber)
 		return
 	end
 	charging = true
@@ -259,29 +265,31 @@ hud = Hud.new(playerGui, {
 fx = Effects.new(hud, getState)
 fx:startAmbient()
 hud:update(state)
-hud:toast("Loading your save...", UI.Colors.Blue)
+hud:toast("Loading your save", UI.Colors.Teal)
 
 -- Throw preview shown on the meter: same math as the server, without random gusts.
 local function previewText(charge: number): string
 	local food = FoodConfig.get(state.equippedFood) or FoodConfig.Foods[1]
 	local raw = GameMath.rawDistance(state.strength or 0, food.power, charge, GameMath.isSweetSpot(charge))
 	local distance, zone = GameMath.resolveFlight(raw)
-	return string.format("~%sm  %s", GameMath.formatNumber(distance), BiomeConfig.zoneName(zone))
+	return string.format("About %s m · %s", GameMath.formatNumber(distance), BiomeConfig.zoneName(zone))
 end
 
 ------------------------------------------------------------------ quest guide
 
 local function focusTarget(focus: string?): (Vector3?, string?)
 	if focus == "ThrowLine" then
-		return GameConfig.ThrowLineCenter + Vector3.new(0, 2, -6), "THROW LINE"
+		return GameConfig.ThrowLineCenter + Vector3.new(0, 2, -6), "Throw Line"
 	elseif focus == "Gym" then
-		return GameConfig.GymCenter + Vector3.new(0, 2, 0), "GYM"
+		return GameConfig.GymCenter + Vector3.new(0, 2, 0), "Gym"
 	elseif focus == "Shop" then
-		return worldPosition({ "SpawnHub", "FoodShopStall", "ShopCounter" }), "FOOD SHOP"
+		return worldPosition({ "SpawnHub", "FoodShopStall", "ShopCounter" }), "Snack Shop"
 	elseif focus == "Pets" then
-		return worldPosition({ "SpawnHub", "FuseAltar", "AltarBase" }), "PETS & FUSE"
+		return worldPosition({ "SpawnHub", "FuseAltar", "AltarBase" }), "Fusion Altar"
 	elseif focus == "Index" then
-		return worldPosition({ "SpawnHub", "PetIndexBoard", "IndexStand" }), "PET INDEX"
+		return worldPosition({ "SpawnHub", "PetIndexBoard", "IndexStand" }), "Pet Index"
+	elseif focus == "Eggs" then
+		return worldPosition({ "SpawnHub", "EggHatchery", "HatcheryCounter" }), "Hatchery"
 	end
 	return nil, nil
 end
@@ -300,18 +308,18 @@ local function updateGuide()
 	local gym = inGym()
 	hud:setGym(gym)
 
-	-- Context hint above the meter.
+	-- One context line above the meter; the primary button adapts when away.
+	local near = nearThrowLine()
+	hud:setAway(state.loaded and not near and not charging)
 	local hint = ""
 	if not state.loaded then
-		hint = "Loading..."
+		hint = "Loading"
 	elseif charging then
-		hint = ""
+		hint = if GameMath.isSweetSpot(GameMath.chargeAt(now - chargeStart)) then "Release now" else "Release to throw"
 	elseif gym then
-		hint = "Hold Q / TRAIN: double strength in here!"
-	elseif not nearThrowLine() then
-		hint = "Walk to the Throw Line to throw (Teleport: Throw)"
-	elseif (state.totalThrows or 0) == 0 then
-		hint = "Hold E or THROW, let go in the green zone!"
+		hint = "Hold to train · 2x in the Gym"
+	elseif near and (state.totalThrows or 0) < 3 then
+		hint = "Hold to charge"
 	end
 	hud:setContext(hint)
 
@@ -325,7 +333,7 @@ local function updateGuide()
 		if target and root and (root.Position - target).Magnitude < 16 then
 			target = nil
 		end
-		if (q.focus == "Shop" or q.focus == "Pets" or q.focus == "Index") and now - lastPulse > 3 then
+		if (q.focus == "Shop" or q.focus == "Pets" or q.focus == "Index" or q.focus == "Eggs") and now - lastPulse > 3 then
 			lastPulse = now
 			hud:pulse(q.focus)
 		end
@@ -342,6 +350,8 @@ local HOTKEYS: { [Enum.KeyCode]: string } = {
 	[Enum.KeyCode.G] = "Pets",
 	[Enum.KeyCode.N] = "Index",
 	[Enum.KeyCode.H] = "Help",
+	[Enum.KeyCode.B] = "Eggs",
+	[Enum.KeyCode.T] = "Travel",
 }
 
 table.insert(connections, UserInputService.InputBegan:Connect(function(input, processed)
@@ -359,7 +369,7 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
 	elseif input.KeyCode == Enum.KeyCode.Q or input.KeyCode == Enum.KeyCode.ButtonX then
 		trainDown()
 	elseif HOTKEYS[input.KeyCode] then
-		hud.panels:toggle(HOTKEYS[input.KeyCode])
+		hud:onNav(HOTKEYS[input.KeyCode])
 	end
 end))
 
@@ -422,7 +432,7 @@ table.insert(connections, StateSync.OnClientEvent:Connect(function(incoming: any
 		if (state.totalThrows or 0) == 0 and (state.questsDone or 0) == 0 then
 			hud:showWelcome()
 		else
-			hud:toast("Welcome back to Snack Force!", UI.Colors.Green)
+			hud:toast("Welcome back", UI.Colors.Leaf)
 		end
 	end
 	hud:update(state)
@@ -434,27 +444,28 @@ table.insert(connections, CatchEffect.OnClientEvent:Connect(function(payload: an
 		return
 	end
 	if type(payload.notice) == "string" then
-		hud:toast(payload.notice, UI.Colors.Red)
+		hud:toast(payload.notice, UI.Colors.Terracotta)
 		return
 	end
 	if payload.kind == "reward" then
 		hud:showReward(payload)
 		return
 	end
+	if payload.kind == "hatch" then
+		hud:showHatch(payload)
+		return
+	end
 	if payload.sweetSpot then
-		hud:toast("SWEET SPOT! x1.25 distance, x1.35 luck", UI.Colors.Green)
+		hud:toast(string.format("Sweet · x%.2f distance", GameConfig.SweetSpotDistanceMult), UI.Colors.Leaf)
 	end
 	if payload.cravingMatched then
-		hud:toast(string.format("Craving match! Combo x%s", tostring(payload.comboMult)), UI.Colors.Orange)
-	end
-	if payload.newRecord and payload.manual then
-		hud:toast(string.format("NEW RECORD: %sm!", GameMath.formatNumber(payload.distance or 0)), UI.Colors.Blue)
+		hud:toast(string.format("Craving match · combo x%s", tostring(payload.comboMult)), UI.Colors.Amber)
 	end
 	if payload.unlockedAutoThrow then
-		hud:showReward({ title = "AUTO-THROW UNLOCKED!", text = "Turn it on in Settings", coins = 0, color = "Purple" })
+		hud:showReward({ title = "Unlocked", text = "Auto-throw", coins = 0, color = "Green", milestone = true })
 	end
 	if payload.zoneFirst then
-		hud:showReward({ title = "NEW ZONE REACHED!", text = payload.zoneName or "", coins = payload.zoneReward or 0, color = "Blue" })
+		hud:showReward({ title = "Next zone", text = payload.zoneName or "", coins = payload.zoneReward or 0, tokens = EggConfig.TokenRewards.ZoneFirst, color = "Blue", milestone = true })
 	end
 	local coins = (payload.bonusCoins or 0) + (payload.discoveryReward or 0) + (payload.soldFor or 0)
 	if coins > 0 then
@@ -474,9 +485,9 @@ table.insert(connections, WeatherEvent.OnClientEvent:Connect(function(w: any)
 	fx:setWeather(w)
 	if w.active and not wasActive then
 		local def = GameConfig.getWeather(w.id)
-		hud:toast(string.format("WEATHER: %s - %s", w.name or "?", w.description or ""), if def then def.color else UI.Colors.Purple)
+		hud:toast(string.format("%s · %s", w.name or "Weather", w.description or ""), if def then def.color else UI.Colors.Plum)
 	elseif not w.active and wasActive then
-		hud:toast("The weather has cleared. Cravings changed!", UI.Colors.PanelLight)
+		hud:toast("Weather cleared · cravings changed", UI.Colors.Teal)
 	end
 end))
 

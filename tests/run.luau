@@ -142,7 +142,7 @@ print("\n[remote contract]")
 test("Remotes folder matches RemoteContract exactly", function()
 	local folder = RS.Remotes
 	eq(#folder:GetChildren(), #RemoteContract.Remotes, "remote count")
-	eq(#RemoteContract.Remotes, 10, "contract size")
+	eq(#RemoteContract.Remotes, 12, "contract size: 10 original remotes + StorePurchase + HatchEgg")
 	for _, spec in RemoteContract.Remotes do
 		local r = folder:FindFirstChild(spec.name)
 		ok(r, "missing remote " .. spec.name)
@@ -481,12 +481,12 @@ test("sanitize survives garbage and clamps values", function()
 		ok(d.ownedFoods[FoodConfig.DefaultFood])
 	end
 	local pets = {}
-	for i = 1, 400 do
+	for i = 1, 800 do
 		pets[i] = { uid = "dup", species = if i % 2 == 0 then "Bunbun" else "FakePet", material = "Gold", size = "Huge", equipped = true }
 	end
 	local d = PlayerData.sanitize({ coins = 1e30, pets = pets, equippedFood = "MegaSteak", ownedFoods = { MegaSteak = true, Hacked = true }, settings = { AutoThrow = true, AutoSkipRarity = "Bogus" } })
 	eq(d.coins, 1e15)
-	eq(#d.pets, GameConfig.MaxPets)
+	eq(#d.pets, PlayerData.MaxStoredPets, "saves keep up to the Big Backpack limit")
 	eq(Inventory.equippedCount(d), GameConfig.PlotPedestals)
 	local seen = {}
 	for _, p in d.pets do
@@ -495,7 +495,8 @@ test("sanitize survives garbage and clamps values", function()
 	end
 	eq(d.equippedFood, "MegaSteak")
 	eq(d.ownedFoods.Hacked, nil)
-	eq(d.settings.AutoThrow, false, "auto-throw needs unlock")
+	eq(d.settings.AutoThrow, true, "saved toggle kept; the server checks the unlock every throw")
+	ok(serverSrc:find("s.data.settings.AutoThrow and autoThrowAvailable(s)", 1, true), "auto-throw loop checks unlock or pass")
 	eq(d.settings.AutoSkipRarity, "Epic")
 end)
 test("v1 saves migrate to v2 without re-paying rewards", function()
@@ -515,7 +516,7 @@ test("v1 saves migrate to v2 without re-paying rewards", function()
 	eq(v2.stats.mutations, 0, "negative stats clamped")
 	eq(v2.settings.ShowGuide, false)
 	eq(PlayerData.sanitize({ questIndex = 1e9 }).questIndex, #QuestConfig.Quests + 1)
-	ok(Server.DataService.Source:find("payload.lastOnline = os.time()", 1, true), "saves record lastOnline")
+	ok(Server.DataService.Source:find("payload.lastOnline = now", 1, true), "saves record lastOnline")
 end)
 test("DataService degrades gracefully without DataStores", function()
 	local DataService = req(Server.DataService)
@@ -624,8 +625,7 @@ test("hub stalls open real panels via ProximityPrompts (not on the throw key)", 
 		if d:IsA("ProximityPrompt") then
 			local panel = d:GetAttribute("OpenPanel")
 			ok(type(panel) == "string", "prompt without panel: " .. d:GetFullName())
-			-- The Eggs panel ships with the HUD rewrite; until then only it may be pending.
-			ok(panelsSrc:find("self.frames." .. panel .. " =", 1, true) or panel == "Eggs", "prompt opens unknown panel " .. panel)
+			ok(panelsSrc:find('add("' .. panel .. '"', 1, true), "prompt opens unknown panel " .. panel)
 			ok(d.KeyboardKeyCode ~= R.Enum.KeyCode.E, "prompt must not use the throw key")
 			ok(d.MaxActivationDistance >= 8 and d.MaxActivationDistance <= 10, "prompt range 8-10")
 			ok(not d.RequiresLineOfSight, "prompt must not need line of sight")
@@ -737,7 +737,7 @@ test("scripts only reach shared instances through WaitForChild", function()
 	end
 end)
 test("client has defaults for all HUD fields before first StateSync", function()
-	for _, key in { "coins", "strength", "income", "bestDistance", "streak", "comboMult", "equippedFood", "ownedFoods", "pets", "settings" } do
+	for _, key in { "coins", "strength", "income", "bestDistance", "streak", "comboMult", "equippedFood", "ownedFoods", "pets", "settings", "gems", "pawTokens", "passes", "store" } do
 		ok(clientSrc:find("\t" .. key .. " = ", 1, true), "missing default " .. key)
 	end
 	ok(serverSrc:find("if not s then", 1, true), "server handlers must check the session exists")
@@ -814,6 +814,342 @@ test("a fresh save progresses through every biome", function()
 	ok(reached.Dunes < 10 * 60, "Dunes should be reached within 10 minutes")
 	print(string.format("        quests: %d/%d done (first 8 by %.1f min)", d.questIndex - 1, #QuestConfig.Quests, (questAt[QuestConfig.Quests[8].id] or 1e9) / 60))
 	ok(d.questIndex > 8, "onboarding quests are completable by a simple bot")
+end)
+
+
+print("\n[store, eggs and purchases]")
+local MonetizationConfig = req(Cfg.MonetizationConfig)
+local EggConfig = req(Cfg.EggConfig)
+local MarketService = req(Server.MarketService)
+local Receipts = req(Server.Receipts)
+
+test("every Robux id is unset and no Robux price is hard-coded", function()
+	for _, p in MonetizationConfig.GamePasses do
+		eq(p.id, 0, p.key .. " id")
+		eq(p.price, nil, p.key .. " price")
+	end
+	for _, p in MonetizationConfig.Products do
+		eq(p.id, 0, p.key .. " id")
+		ok(p.gems > 0)
+	end
+	eq(MonetizationConfig.passById(0), nil)
+	eq(MonetizationConfig.productById(0), nil)
+end)
+
+test("only Gems are purchasable and nothing bought with Robux or Gems is random", function()
+	ok(MonetizationConfig.PurchasableCurrencies.Gems and not MonetizationConfig.PurchasableCurrencies.PawTokens and not MonetizationConfig.PurchasableCurrencies.Coins)
+	for _, o in MonetizationConfig.GemOffers do
+		local g = o.grant
+		ok(g.kind == "pet" or g.kind == "boost", o.key .. " grant kind")
+		if g.kind == "pet" then
+			ok(PetConfig.get(g.species) and MutationConfig.getMaterial(g.material) and MutationConfig.getSize(g.size), o.key .. " fixed contents")
+		end
+	end
+	for _, egg in EggConfig.Eggs do
+		ok(MonetizationConfig.EarnOnlyCurrencies[egg.currency], egg.id .. " must cost an earn-only currency")
+		eq(EggConfig.isPaidRandom(egg), false)
+	end
+	local receiptsSrc = Server.Receipts.Source
+	ok(not receiptsSrc:find("pawTokens", 1, true) and not receiptsSrc:find("coins", 1, true), "receipts only grant Gems")
+end)
+
+test("egg odds are complete, exclusive and match a Monte Carlo run", function()
+	eq(#EggConfig.validate(), 0, table.concat(EggConfig.validate(), "; "))
+	for _, z in BiomeConfig.allCravingZones() do
+		for _, p in PetConfig.forZone(z) do
+			ok(p.zone ~= PetConfig.EggZone, "egg pet in a throw zone")
+		end
+	end
+	local rng = seqRng(99)
+	for _, egg in EggConfig.Eggs do
+		local counts, n = {}, 40000
+		for _ = 1, n do
+			local sp = EggConfig.pick(egg, rng())
+			counts[sp] = (counts[sp] or 0) + 1
+		end
+		for _, e in egg.entries do
+			near((counts[e.species] or 0) / n * 100, e.chance, 1.2, egg.id .. " " .. e.species)
+		end
+	end
+	local sa = EggConfig.get("SafariEgg")
+	eq(EggConfig.pick(sa, 0), sa.entries[1].species)
+	eq(EggConfig.pick(sa, 0.9999999), sa.entries[#sa.entries].species)
+end)
+
+test("paid random gate fails closed via PolicyService", function()
+	local function policy(behaviour)
+		return { GetPolicyInfoForPlayerAsync = function()
+			if behaviour == "error" then
+				error("policy down")
+			end
+			return behaviour
+		end }
+	end
+	local p = { UserId = 1 }
+	eq(MarketService.new({}, policy("error")):paidRandomRestricted(p), true, "error -> restricted")
+	eq(MarketService.new({}, policy({})):paidRandomRestricted(p), true, "missing field -> restricted")
+	eq(MarketService.new({}, policy({ ArePaidRandomItemsRestricted = true })):paidRandomRestricted(p), true)
+	eq(MarketService.new({}, policy({ ArePaidRandomItemsRestricted = false })):paidRandomRestricted(p), false)
+	local gemEgg = { id = "X", currency = "Gems", cost = 10, entries = {} }
+	ok(EggConfig.isPaidRandom(gemEgg))
+	eq((EggConfig.hatchCheck(gemEgg, { Gems = 99 }, true)), false, "restricted player can't open a paid egg")
+	eq((EggConfig.hatchCheck(gemEgg, { Gems = 99 }, false)), true)
+	local sa = EggConfig.get("SafariEgg")
+	eq((EggConfig.hatchCheck(sa, { PawTokens = sa.cost }, true)), true, "earn-only eggs work for everyone")
+	eq((EggConfig.hatchCheck(sa, { PawTokens = sa.cost - 1 }, false)), false)
+	ok(serverSrc:find("market:paidRandomRestricted(s.player)", 1, true), "server consults the policy gate")
+end)
+
+test("unconfigured offers never prompt; configured ones use fetched prices", function()
+	local calls = { info = 0, prompt = 0 }
+	local price = { IsForSale = true, PriceInRobux = 99 }
+	local fake = {
+		GetProductInfoAsync = function(_, _id, _t)
+			calls.info += 1
+			return price
+		end,
+		PromptGamePassPurchase = function()
+			calls.prompt += 1
+		end,
+		PromptProductPurchase = function()
+			calls.prompt += 1
+		end,
+		UserOwnsGamePassAsync = function()
+			return true
+		end,
+	}
+	local m = MarketService.new(fake, {})
+	m:refreshPrices()
+	eq(calls.info, 0, "id 0 is never looked up")
+	local player = { UserId = 5 }
+	for _, p in MonetizationConfig.GamePasses do
+		local okp, msg = m:promptPass(player, p.key)
+		eq(okp, false)
+		eq(msg, "Not available yet")
+		eq(m:ownsPass(player, p), false, "unset pass is never owned")
+	end
+	for _, p in MonetizationConfig.Products do
+		eq((m:promptProduct(player, p.key)), false)
+	end
+	eq(calls.prompt, 0, "no purchase prompt for unset ids")
+	for _, l in m:catalog().passes do
+		eq(l.status, "unset")
+		eq(l.price, nil)
+	end
+	-- Pretend a pass and a product were configured.
+	local pass, product = MonetizationConfig.GamePasses[1], MonetizationConfig.Products[1]
+	pass.id, product.id = 777, 888
+	m:refreshPrices()
+	eq(m:catalog().passes[1].status, "ok")
+	eq(m:catalog().passes[1].price, 99, "price comes from MarketplaceService")
+	ok((m:promptPass(player, pass.key)))
+	ok((m:promptProduct(player, product.key)))
+	eq(calls.prompt, 2)
+	ok(m:ownsPass(player, pass))
+	price.IsForSale = false
+	m:refreshPrices()
+	eq(m:catalog().products[1].status, "offsale")
+	eq((m:promptProduct(player, product.key)), false, "off-sale items don't prompt")
+	pass.id, product.id = 0, 0
+end)
+
+local function receiptRig(opts)
+	local product = MonetizationConfig.Products[1]
+	product.id = 4242
+	local d = PlayerData.defaults()
+	local session = { data = d, canSave = opts.canSave ~= false, receiptBusy = 0, pendingReceipts = {} }
+	local rig = { saves = 0, granted = 0, session = session, product = product }
+	local present = opts.present ~= false
+	local loadAfter = opts.loadAfter or 0
+	local waits = 0
+	rig.proc = Receipts.new({
+		findSession = function()
+			if waits < loadAfter then
+				return nil
+			end
+			return if opts.noSession then nil else session
+		end,
+		isPresent = function()
+			return present
+		end,
+		save = function(s)
+			rig.saves += 1
+			ok(s.data.receipts[rig.lastId], "receipt recorded before the save")
+			if rig.failSave == "error" then
+				error("datastore down")
+			end
+			return not rig.failSave
+		end,
+		onGranted = function()
+			rig.granted += 1
+		end,
+		wait = function()
+			waits += 1
+		end,
+		now = function()
+			return 1000
+		end,
+	})
+	function rig.process(id)
+		rig.lastId = id
+		return rig.proc:process({ PlayerId = 1, ProductId = product.id, PurchaseId = id })
+	end
+	return rig
+end
+
+test("receipts are granted once, saved before acknowledging and rolled back on failure", function()
+	local rig = receiptRig({})
+	local gems = rig.product.gems
+	eq(rig.process("A"), "Granted")
+	eq(rig.session.data.gems, gems)
+	eq(rig.saves, 1)
+	eq(rig.process("A"), "Granted", "duplicate receipt acknowledged")
+	eq(rig.session.data.gems, gems, "never granted twice")
+	eq(rig.saves, 1)
+	rig.failSave = true
+	eq(rig.process("B"), "NotProcessedYet", "failed save is not acknowledged")
+	eq(rig.session.data.gems, gems, "rolled back")
+	eq(rig.session.data.receipts.B, nil)
+	rig.failSave = "error"
+	eq(rig.process("B"), "NotProcessedYet")
+	eq(rig.session.data.gems, gems)
+	rig.failSave = false
+	eq(rig.process("B"), "Granted", "retry succeeds")
+	eq(rig.session.data.gems, gems * 2)
+	eq(rig.granted, 2)
+	eq(rig.session.receiptBusy, 0)
+	eq(receiptRig({ canSave = false }).process("C"), "NotProcessedYet", "unsaveable session never grants")
+	eq(receiptRig({ noSession = true, present = false }).process("D"), "NotProcessedYet", "player left")
+	eq(receiptRig({ loadAfter = 3 }).process("E"), "Granted", "waits for the save to load")
+	local unknown = receiptRig({})
+	eq(unknown.proc:process({ PlayerId = 1, ProductId = 999999, PurchaseId = "F" }), "NotProcessedYet", "unknown product")
+	MonetizationConfig.Products[1].id = 0
+	eq(unknown.proc:process({ PlayerId = 1, ProductId = 0, PurchaseId = "G" }), "NotProcessedYet", "unset id never matches")
+end)
+
+test("receipt history survives saves and is capped oldest-first", function()
+	local d = PlayerData.defaults()
+	for i = 1, MonetizationConfig.MaxReceipts + 20 do
+		PlayerData.recordReceipt(d, "r" .. i, i)
+	end
+	local n = 0
+	for _ in d.receipts do
+		n += 1
+	end
+	eq(n, MonetizationConfig.MaxReceipts)
+	eq(d.receipts.r1, nil, "oldest trimmed")
+	ok(d.receipts["r" .. (MonetizationConfig.MaxReceipts + 20)], "newest kept")
+	local back = PlayerData.sanitize({ receipts = d.receipts, gems = 55 })
+	ok(back.receipts["r" .. (MonetizationConfig.MaxReceipts + 20)])
+	eq(back.gems, 55)
+end)
+
+test("v2 saves migrate to v3 with safe store defaults", function()
+	local d = PlayerData.sanitize({ version = 2, coins = 10, questIndex = 4, settings = { ShowGuide = false } })
+	eq(d.gems, 0)
+	eq(d.pawTokens, 0)
+	eq(next(d.receipts), nil)
+	eq(next(d.boosts), nil)
+	eq(d.stats.eggsHatched, 0)
+	eq(d.settings.ReduceMotion, false)
+	eq(d.questIndex, 4)
+	local g = PlayerData.sanitize({ gems = -5, pawTokens = 1e12, receipts = { [1] = 5, ok = "x" }, boosts = { CoinRush = 50, Hack = 9 }, settings = { ReduceMotion = true } })
+	eq(g.gems, 0)
+	eq(g.pawTokens, 1e6)
+	eq(g.receipts[1], nil, "non-string receipt ids dropped")
+	eq(g.receipts.ok, 0)
+	eq(g.boosts.CoinRush, 50)
+	eq(g.boosts.Hack, nil)
+	eq(g.settings.ReduceMotion, true)
+	eq(GameConfig.DataVersion, 3)
+end)
+
+test("DataService session lock: one writer per save", function()
+	local DataService = req(Server.DataService)
+	local db = {}
+	local fakeStore = {
+		UpdateAsync = function(_, key, fn)
+			local nv = fn(db[key])
+			if nv ~= nil then
+				db[key] = nv
+			end
+			return nv
+		end,
+	}
+	local now = 1000
+	DataService._configure({ store = fakeStore, jobId = "A", clock = function()
+		return now
+	end, sleep = function() end })
+	local d, canSave = DataService.load(7)
+	ok(canSave)
+	eq(db.player_7.lock.job, "A")
+	d.gems = 12
+	ok(DataService.save(7, d))
+	DataService._configure({ jobId = "B" })
+	local _, canB = DataService.load(7)
+	eq(canB, false, "another live server holds the lock")
+	eq(db.player_7.gems, 12, "locked save untouched")
+	now += DataService.LockTimeout + 1
+	local d2, canB2 = DataService.load(7)
+	ok(canB2, "stale lock can be taken over")
+	eq(d2.gems, 12)
+	DataService._configure({ jobId = "A" })
+	eq(DataService.save(7, d), false, "old server can't overwrite after takeover")
+	DataService._configure({ jobId = "B" })
+	ok(DataService.save(7, d2, true))
+	eq(db.player_7.lock, nil, "released on leave")
+	DataService._configure({ reset = true })
+end)
+
+test("purchases are wired server-side only", function()
+	local n = 0
+	for _, inst in game:GetDescendants() do
+		if inst:IsA("LuaSourceContainer") then
+			local _, c = inst.Source:gsub("MarketplaceService%.ProcessReceipt%s*=", "")
+			n += c
+		end
+	end
+	eq(n, 1, "exactly one ProcessReceipt callback")
+	ok(not serverSrc:find("PromptProductPurchaseFinished:Connect", 1, true), "never grant from PromptProductPurchaseFinished")
+	ok(serverSrc:find("market:ownsPass(player, pass)", 1, true), "pass purchases re-verified server-side")
+	for _, inst in SP:GetDescendants() do
+		if inst:IsA("LuaSourceContainer") then
+			for _, api in { "PromptGamePassPurchase", "PromptProductPurchase", "UserOwnsGamePassAsync", "ProcessReceipt" } do
+				ok(not inst.Source:find(api, 1, true), "client must not use " .. api)
+			end
+		end
+	end
+end)
+
+test("UI: readable fixed type, sufficient contrast, reduced motion", function()
+	local client = SP.StarterPlayerScripts.Client
+	for _, name in { "UI", "Hud", "Panels" } do
+		ok(not client[name].Source:find("TextScaled = true", 1, true), name .. " must not shrink text")
+	end
+	local UI = req(client.UI)
+	local function lum(c)
+		local function ch(v)
+			return if v <= 0.03928 then v / 12.92 else ((v + 0.055) / 1.055) ^ 2.4
+		end
+		return 0.2126 * ch(c.R) + 0.7152 * ch(c.G) + 0.0722 * ch(c.B)
+	end
+	local function contrast(a, b)
+		local x, y = lum(a), lum(b)
+		return (math.max(x, y) + 0.05) / (math.min(x, y) + 0.05)
+	end
+	local C = UI.Colors
+	ok(contrast(C.Charcoal, C.Ivory) >= 7, "body text")
+	ok(contrast(C.Muted, C.Ivory) >= 4.5, "secondary text")
+	ok(contrast(C.Muted, C.Paper) >= 4.5, "secondary text on cards")
+	ok(contrast(C.OnColor, C.Leaf) >= 3, "primary button label (large bold)")
+	ok(contrast(C.Charcoal, C.Amber) >= 4.5, "reward label")
+	ok(contrast(C.OnColor, C.Terracotta) >= 3, "danger label")
+	ok(UI.Type.Caption >= 14 and UI.Type.Body >= 18, "minimum text sizes")
+	UI.setReduceMotion(true)
+	ok(UI.reducedMotion())
+	UI.setReduceMotion(false)
+	ok(RemoteContract.Settings.ReduceMotion == "boolean")
+	ok(SP.StarterPlayerScripts.Client.Effects.Source:find("ReducedMotionEnabled", 1, true), "effects honour the OS setting")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

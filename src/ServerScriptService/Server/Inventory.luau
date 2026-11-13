@@ -45,8 +45,10 @@ function Inventory.totalIncome(data: any): number
 	return total
 end
 
-function Inventory.isFull(data: any): boolean
-	return #data.pets >= GameConfig.MaxPets
+-- `capacity` defaults to the base limit; the server passes the session's real capacity
+-- (Big Backpack owners get more).
+function Inventory.isFull(data: any, capacity: number?): boolean
+	return #data.pets >= (capacity or GameConfig.MaxPets)
 end
 
 function Inventory.shouldAutoSell(data: any, rec: any): boolean
@@ -62,7 +64,7 @@ function Inventory.shouldAutoSell(data: any, rec: any): boolean
 end
 
 -- Adds a freshly caught pet. Returns ("kept" | "sold" | "full", coinsEarned).
-function Inventory.catch(data: any, rec: any, slots: number): (string, number)
+function Inventory.catch(data: any, rec: any, slots: number, capacity: number?): (string, number)
 	data.totalCatches += 1
 	data.discovered[rec.species] = true
 	if Inventory.shouldAutoSell(data, rec) then
@@ -70,7 +72,7 @@ function Inventory.catch(data: any, rec: any, slots: number): (string, number)
 		data.coins += value
 		return "sold", value
 	end
-	if Inventory.isFull(data) then
+	if Inventory.isFull(data, capacity) then
 		local value = GameMath.sellValue(rec)
 		data.coins += value
 		return "full", value
@@ -80,6 +82,15 @@ function Inventory.catch(data: any, rec: any, slots: number): (string, number)
 	end
 	table.insert(data.pets, rec)
 	return "kept", 0
+end
+
+-- Adds a hatched or purchased pet (never auto-sold). Caller checks capacity first.
+function Inventory.grant(data: any, rec: any, slots: number)
+	data.discovered[rec.species] = true
+	if Inventory.equippedCount(data) < slots then
+		rec.equipped = true
+	end
+	table.insert(data.pets, rec)
 end
 
 -- Equips the `slots` highest-income pets. Returns the number equipped.

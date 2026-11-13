@@ -40,7 +40,8 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 | Train strength | hold **Q** / **TRAIN** / **X** (2× inside the Gym) |
 | Skip camera effect / cutscene | **Space**, **Enter** or **SKIP** |
 | Food Shop / Pets & Fuse / Pet Index / How to Play | **F** / **G** / **N** / **H**, the left menu, or **R** at the hub stalls |
-| Teleport | Throw Line, Gym or your Plot from the left menu |
+| Teleport | **T** / Travel: Throw Line, Gym or your plot |
+| Safari Eggs | **B**, the Eggs button, or **R** at the Hatchery |
 
 - **Sweet spot:** releasing in the green zone gives ×1.25 distance and ×1.35 mutation luck.
 - **Biomes:** Sunny Meadow → Sizzle Dunes → Frostbite Peaks → Magma Fields → Toxic Swamp → Nuclear Wasteland. Each biome's wind and gravity stretch or shrink the throw. Past 2,500 m the snack reaches **Space**, and past 3,600 m it reaches **the Moon**. Both play skippable cutscenes. Catches below your *auto-skip rarity* setting skip the cutscene automatically.
@@ -56,14 +57,22 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 - **Hub:** Strength Gym (2× training), Food Shop stall, Fusion Altar, Pet Index book, leaderboard, signposts, bunting and balloons. Each biome has its own landmarks: windmills and a rainbow arch, a pyramid and an oasis, an igloo and snowmen, a volcano with a lava river, giant glowing mushrooms, and cooling towers. Mountains line the lane, and the atmosphere changes colour with the biome and the weather.
 - **HUD:** scales to any screen size. Touch devices get a larger minimum size, and on small screens the cravings board collapses. You also get coin popups, reward banners, catch cards with a 3D pet preview, a landing beacon, a best-distance flag, and a welcome screen on your first session.
 
+## Store, eggs and purchases
+
+- **Snacks:** bought with earned coins.
+- **Safari Eggs** (Hatchery stall or **B**): opened with **Paw Tokens**. You earn tokens from quests, first landings in a zone, new species and every 50 catches, and you can't buy them. Each egg shows its complete odds before you hatch.
+- **Store:** game passes (Double Coins, Auto-Throw Pass, Big Backpack, Golden Trail), Gem packs (developer products) and fixed-content Gem offers. All Robux IDs are `0` (unset) in `Config/MonetizationConfig.luau`, so those offers show "Not available yet" and never open a prompt. Once real IDs are set, the server reads prices from MarketplaceService.
+- **Security:** grants only happen in one server-side `ProcessReceipt`. It records each PurchaseId in the session-locked save and returns PurchaseGranted only after the save succeeds. See [`docs/DESIGN_AUDIT.md`](docs/DESIGN_AUDIT.md) for the full design and the paid-random-items reasoning.
+
 ## Layout
 
 ```
 default.project.json             Rojo tree (Remotes are declared here so they exist before any script runs)
-src/ReplicatedStorage/Config     GameConfig, BiomeConfig, PetConfig, MutationConfig, FoodConfig, QuestConfig
+src/ReplicatedStorage/Config     GameConfig, BiomeConfig, PetConfig, MutationConfig, FoodConfig, QuestConfig,
+                                 EggConfig, MonetizationConfig
 src/ReplicatedStorage/Shared     GameMath (pure, authoritative math), Progression (quests/rewards), PetModelBuilder, RemoteContract
 src/ServerScriptService          GameServer + Server/ (WorldBuilder, PlotService, Inventory, PlayerData,
-                                 DataService, WeatherService, RateLimiter)
+                                 DataService (session lock), WeatherService, RateLimiter, MarketService, Receipts)
 src/StarterPlayerScripts         GameClient + Client/ (Hud, Panels, Effects, UI)
 tests/                           Lune runtime shim + test-suite
 ```
@@ -75,5 +84,5 @@ tests/                           Lune runtime shim + test-suite
 - Each remote has its own token-bucket rate limit. Throws and training also have cooldowns.
 - All arguments are type-checked, length-checked and checked against the configs.
 - Manual throws require the character to be at the Throw Line. The Gym bonus is checked against the server-side character position.
-- Quest, discovery, zone and offline rewards are all computed and paid by the server. No new remotes were added.
+- Quest, discovery, zone and offline rewards are all computed and paid by the server. Two remotes were added for the store: `StorePurchase` (it only asks the server to show a prompt, or to spend Gems on a fixed offer) and `HatchEgg`.
 - Saved data is sanitised on load: values are clamped, UIDs reassigned, and unknown pets and foods dropped. If a load fails, the player still gets a playable session, but the save is never overwritten.

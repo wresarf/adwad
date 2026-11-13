@@ -434,7 +434,11 @@ function Effects:_foodPart(parent: Instance, foodId: string?, withTrail: boolean
 		trail.LightEmission = 0.1
 		trail.LightInfluence = 0.6
 		trail.WidthScale = ns({ { 0, 1 }, { 1, 0.1 } })
-		trail.Color = ColorSequence.new(food.color:Lerp(Palette.Ivory, 0.3), Palette.Ivory)
+		local st = self.getState()
+		local golden = type(st.passes) == "table" and st.passes.GoldenTrail == true -- Golden Trail pass (cosmetic)
+		trail.Color = if golden
+			then ColorSequence.new(Color3.fromRGB(255, 214, 90), Palette.Amber)
+			else ColorSequence.new(food.color:Lerp(Palette.Ivory, 0.3), Palette.Ivory)
 		trail.Transparency = ns({ { 0, 0.3 }, { 0.6, 0.75 }, { 1, 1 } })
 		trail.Parent = p
 	end

@@ -10,6 +10,10 @@
 --   FusePets       RemoteFunction (fuseKey: string | "ALL") -> (ok, message)
 --   AutoSell       RemoteFunction (threshold: rarity | "Off", sellNow: boolean?) -> (ok, message)
 --   ToggleSetting  RemoteFunction (setting: string, value: any) -> (ok, message)
+--   StorePurchase  RemoteFunction (kind: "Pass" | "Product" | "Offer", key: string) -> (ok, message)
+--                  Pass/Product only ask the server to show the Roblox prompt; grants happen
+--                  server-side (ownership check / ProcessReceipt). Offer spends Gems.
+--   HatchEgg       RemoteFunction (eggId: string) -> (ok, message)
 -- Server -> Client
 --   StateSync      RemoteEvent    (state: table)   full player snapshot
 --   CatchEffect    RemoteEvent    (catch: table)   result of a throw (thrower only)
@@ -27,12 +31,15 @@ RemoteContract.Remotes = {
 	{ name = "FusePets", class = "RemoteFunction", direction = "ClientToServer" },
 	{ name = "AutoSell", class = "RemoteFunction", direction = "ClientToServer" },
 	{ name = "ToggleSetting", class = "RemoteFunction", direction = "ClientToServer" },
+	{ name = "StorePurchase", class = "RemoteFunction", direction = "ClientToServer" },
+	{ name = "HatchEgg", class = "RemoteFunction", direction = "ClientToServer" },
 	{ name = "StateSync", class = "RemoteEvent", direction = "ServerToClient" },
 	{ name = "CatchEffect", class = "RemoteEvent", direction = "ServerToClient" },
 	{ name = "WeatherEvent", class = "RemoteEvent", direction = "ServerToClient" },
 } :: { RemoteSpec }
 
 RemoteContract.ThrowActions = { Begin = true, Release = true }
+RemoteContract.StoreKinds = { Pass = true, Product = true, Offer = true }
 
 -- Settings a client may change through ToggleSetting, with their value validator.
 RemoteContract.Settings = {
@@ -41,6 +48,7 @@ RemoteContract.Settings = {
 	KeepMutated = "boolean",
 	ShowCutscenes = "boolean",
 	ShowGuide = "boolean",
+	ReduceMotion = "boolean",
 }
 
 return RemoteContract

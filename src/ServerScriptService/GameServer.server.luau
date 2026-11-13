@@ -2,7 +2,9 @@
 -- Snack Force: Pet Toss - authoritative game server.
 -- Owns all math/RNG, currency, inventory and persistence. Clients only send intents.
 
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
+local PolicyService = game:GetService("PolicyService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -15,6 +17,8 @@ local GameConfig = require(Config:WaitForChild("GameConfig"))
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
+local MonetizationConfig = require(Config:WaitForChild("MonetizationConfig"))
+local EggConfig = require(Config:WaitForChild("EggConfig"))
 local GameMath = require(Shared:WaitForChild("GameMath"))
 local Progression = require(Shared:WaitForChild("Progression"))
 local RemoteContract = require(Shared:WaitForChild("RemoteContract"))
@@ -27,6 +31,8 @@ local Inventory = require(ServerModules:WaitForChild("Inventory"))
 local PlotService = require(ServerModules:WaitForChild("PlotService"))
 local WeatherService = require(ServerModules:WaitForChild("WeatherService"))
 local RateLimiter = require(ServerModules:WaitForChild("RateLimiter"))
+local MarketService = require(ServerModules:WaitForChild("MarketService"))
+local Receipts = require(ServerModules:WaitForChild("Receipts"))
 
 ------------------------------------------------------------------ remotes
 
@@ -46,6 +52,8 @@ local ToggleSetting = remote("ToggleSetting") :: RemoteFunction
 local StateSync = remote("StateSync") :: RemoteEvent
 local CatchEffect = remote("CatchEffect") :: RemoteEvent
 local WeatherEvent = remote("WeatherEvent") :: RemoteEvent
+local StorePurchase = remote("StorePurchase") :: RemoteFunction
+local HatchEgg = remote("HatchEgg") :: RemoteFunction
 
 ------------------------------------------------------------------ world
 
@@ -53,6 +61,14 @@ local world = WorldBuilder.build(Workspace)
 local plots = PlotService.new(world.plots)
 local limiter = RateLimiter.new(GameConfig.RateLimits)
 local rng = Random.new()
+local market = MarketService.new(MarketplaceService, PolicyService)
+do
+	local problems = EggConfig.validate()
+	assert(#problems == 0, "EggConfig invalid: " .. table.concat(problems, "; "))
+end
+task.spawn(function()
+	market:refreshPrices()
+end)
 local function roll(): number
 	return rng:NextNumber()
 end
@@ -83,6 +99,10 @@ type Session = {
 	dirtyStats: boolean,
 	saving: boolean,
 	connections: { RBXScriptConnection },
+	passes: { [string]: boolean }, -- verified server-side each session, never saved
+	receiptBusy: number,
+	pendingReceipts: { [string]: boolean },
+	paidRandomRestricted: boolean,
 }
 
 local sessions: { [Player]: Session } = {}
@@ -94,8 +114,31 @@ local function markFull(s: Session)
 	s.dirtyFull = true
 end
 
+local function coinRushActive(s: Session): boolean
+	return (s.data.boosts.CoinRush or 0) > os.time()
+end
+
+local function incomeMultiplier(s: Session): number
+	local mult = 1
+	if s.passes.DoubleCoins then
+		mult *= MonetizationConfig.DoubleCoinsMult
+	end
+	if coinRushActive(s) then
+		mult *= MonetizationConfig.CoinRushMult
+	end
+	return mult
+end
+
 local function recomputeIncome(s: Session)
-	s.income = Inventory.totalIncome(s.data)
+	s.income = Inventory.totalIncome(s.data) * incomeMultiplier(s)
+end
+
+local function capacity(s: Session): number
+	return GameConfig.MaxPets + (if s.passes.BigBackpack then MonetizationConfig.BackpackBonus else 0)
+end
+
+local function autoThrowAvailable(s: Session): boolean
+	return s.data.autoThrowUnlocked or s.passes.EarlyAutoThrow == true
 end
 
 local function refreshPlot(s: Session)
@@ -114,7 +157,12 @@ local function buildState(s: Session, full: boolean): { [string]: any }
 		streak = s.streak,
 		comboMult = GameMath.comboMultiplier(s.streak),
 		totalCatches = d.totalCatches,
-		autoThrowUnlocked = d.autoThrowUnlocked,
+		autoThrowUnlocked = autoThrowAvailable(s),
+		gems = d.gems,
+		pawTokens = d.pawTokens,
+		coinRushEndsAt = if coinRushActive(s) then d.boosts.CoinRush else 0,
+		incomeMult = incomeMultiplier(s),
+		receiptPending = s.receiptBusy > 0,
 		equippedFood = d.equippedFood,
 		canSave = s.canSave,
 		quest = Progression.questSnapshot(d, s.income) or false, -- false = quest line finished
@@ -127,7 +175,10 @@ local function buildState(s: Session, full: boolean): { [string]: any }
 		state.settings = d.settings
 		state.discovered = d.discovered
 		state.plotIndex = if s.plot then s.plot.index else nil
-		state.maxPets = GameConfig.MaxPets
+		state.maxPets = capacity(s)
+		state.passes = s.passes
+		state.store = market:catalog()
+		state.paidRandomRestricted = s.paidRandomRestricted
 		state.slots = GameConfig.PlotPedestals
 		state.stats = d.stats
 		state.zonesReached = d.zonesReached
@@ -135,15 +186,22 @@ local function buildState(s: Session, full: boolean): { [string]: any }
 	return state
 end
 
-local function notifyReward(s: Session, title: string, text: string, coins: number, color: string?)
-	CatchEffect:FireClient(s.player, { kind = "reward", title = title, text = text, coins = coins, color = color })
+local function notifyReward(s: Session, title: string, text: string, coins: number, color: string?, tokens: number?, milestone: boolean?)
+	CatchEffect:FireClient(s.player, { kind = "reward", title = title, text = text, coins = coins, color = color, tokens = tokens or 0, milestone = milestone == true })
+end
+
+local function giveTokens(s: Session, amount: number)
+	if amount > 0 then
+		s.data.pawTokens = math.min(s.data.pawTokens + amount, 1e6)
+	end
 end
 
 -- Pays out every quest that the player's current stats already satisfy.
 local function checkQuests(s: Session)
 	local done = Progression.advanceQuests(s.data, s.income)
 	for _, q in done do
-		notifyReward(s, "QUEST COMPLETE!", q.title, q.reward, "Gold")
+		giveTokens(s, EggConfig.TokenRewards.Quest)
+		notifyReward(s, "Quest complete", q.title, q.reward, "Gold", EggConfig.TokenRewards.Quest, false)
 	end
 	if #done > 0 then
 		markFull(s)
@@ -160,14 +218,20 @@ local function sync(s: Session)
 	StateSync:FireClient(s.player, buildState(s, full))
 end
 
-local function saveSession(s: Session): boolean
-	if not s.canSave or s.saving then
+-- Saves now, waiting for an in-flight save first so a receipt is never reported as
+-- saved by a write that started before it was recorded.
+local function saveSession(s: Session, release: boolean?): boolean
+	if not s.canSave then
 		return false
 	end
+	local deadline = os.clock() + 30
+	while s.saving and os.clock() < deadline do
+		task.wait(0.1)
+	end
 	s.saving = true
-	local ok = DataService.save(s.player.UserId, s.data)
+	local ok, result = pcall(DataService.save, s.player.UserId, s.data, release)
 	s.saving = false
-	return ok
+	return ok and result == true
 end
 
 local function rootPosition(player: Player): Vector3?
@@ -228,6 +292,7 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 		d.zonesReached[result.zone] = true
 		zoneReward = BiomeConfig.zoneReward(result.zone)
 		d.coins += zoneReward
+		giveTokens(s, EggConfig.TokenRewards.ZoneFirst)
 	end
 	local newRecord = result.distance > d.bestDistance
 	if newRecord then
@@ -236,14 +301,26 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 	local unlockedAuto = false
 	if not d.autoThrowUnlocked and d.bestDistance >= GameConfig.AutoThrowUnlockDistance then
 		d.autoThrowUnlocked = true
-		unlockedAuto = true
+		unlockedAuto = not s.passes.EarlyAutoThrow
 	end
 
 	local rec = Inventory.newPet(d, result.species, result.material, result.size)
 	local newSpecies = not d.discovered[rec.species]
 	local discoveryReward = if newSpecies then Progression.discoveryReward(rec.species) else 0
 	d.coins += discoveryReward
-	local outcome, soldFor = Inventory.catch(d, rec, GameConfig.PlotPedestals)
+	local tokens = 0
+	if newSpecies then
+		tokens += EggConfig.TokenRewards.NewSpecies
+	end
+	if zoneReward > 0 then
+		tokens += EggConfig.TokenRewards.ZoneFirst
+	end
+	local outcome, soldFor = Inventory.catch(d, rec, GameConfig.PlotPedestals, capacity(s))
+	if d.totalCatches % EggConfig.CatchMilestoneEvery == 0 then
+		tokens += EggConfig.TokenRewards.CatchMilestone
+		giveTokens(s, EggConfig.TokenRewards.CatchMilestone)
+	end
+	giveTokens(s, if newSpecies then EggConfig.TokenRewards.NewSpecies else 0)
 	local rarity, rarityIndex = GameMath.overallRarity(rec)
 	if GameMath.isMutated(rec) then
 		stats.mutations += 1
@@ -288,6 +365,8 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 		zoneFirst = zoneReward > 0,
 		zoneReward = zoneReward,
 		zoneName = BiomeConfig.zoneName(result.zone),
+		tokens = tokens,
+		goldenTrail = s.passes.GoldenTrail == true,
 	})
 end
 
@@ -449,12 +528,132 @@ ToggleSetting.OnServerInvoke = guard("ToggleSetting", function(s, name: any, val
 	else
 		return false, "Unknown setting"
 	end
-	if name == "AutoThrow" and value == true and not s.data.autoThrowUnlocked then
+	if name == "AutoThrow" and value == true and not autoThrowAvailable(s) then
 		return false, "Reach the Toxic Swamp (" .. GameConfig.AutoThrowUnlockDistance .. "m) to unlock Auto-Throw"
 	end
 	(s.data.settings :: any)[name] = value
 	markFull(s)
 	return true, name .. " updated"
+end)
+
+------------------------------------------------------------------ store + eggs
+
+local function addPet(s: Session, species: string, material: string, size: string): (any, boolean)
+	local d = s.data
+	local rec = Inventory.newPet(d, species, material, size)
+	local newSpecies = not d.discovered[species]
+	Inventory.grant(d, rec, GameConfig.PlotPedestals)
+	if newSpecies then
+		giveTokens(s, EggConfig.TokenRewards.NewSpecies)
+	end
+	refreshPlot(s)
+	return rec, newSpecies
+end
+
+local function buyOffer(s: Session, key: any): (boolean, string)
+	local offer = MonetizationConfig.getOffer(key)
+	if not offer then
+		return false, "Unknown offer"
+	end
+	if s.receiptBusy > 0 then
+		return false, "Finishing your last purchase..."
+	end
+	local d = s.data
+	if d.gems < offer.gems then
+		return false, string.format("Need %d more Gems", offer.gems - d.gems)
+	end
+	local grant = offer.grant
+	if grant.kind == "pet" then
+		local species, material, size = grant.species, grant.material or "Normal", grant.size or "Normal"
+		if not species or not PetConfig.get(species) then
+			return false, "Offer unavailable"
+		end
+		if Inventory.isFull(d, capacity(s)) then
+			return false, "Your backpack is full"
+		end
+		d.gems -= offer.gems
+		local rec = addPet(s, species, material, size)
+		markFull(s)
+		local rarity, rarityIndex = GameMath.overallRarity(rec)
+		CatchEffect:FireClient(s.player, { kind = "hatch", source = "offer", pet = rec, rarity = rarity, rarityIndex = rarityIndex, income = GameMath.petIncome(rec) })
+		return true, offer.name .. " added to your pets"
+	elseif grant.kind == "boost" and grant.boost == "CoinRush" then
+		local now = os.time()
+		local current = math.max(d.boosts.CoinRush or 0, now)
+		if current - now + (grant.seconds or 0) > MonetizationConfig.MaxBoostSeconds then
+			return false, "Coin Rush is already at 24 hours"
+		end
+		d.gems -= offer.gems
+		d.boosts.CoinRush = current + (grant.seconds or 0)
+		refreshPlot(s)
+		markFull(s)
+		return true, "Coin Rush active: 2x plot coins"
+	end
+	return false, "Offer unavailable"
+end
+
+StorePurchase.OnServerInvoke = guard("StorePurchase", function(s, kind: any, key: any)
+	if type(kind) ~= "string" or not RemoteContract.StoreKinds[kind] or type(key) ~= "string" or #key > 40 then
+		return false, "Invalid request"
+	end
+	if kind == "Pass" then
+		local pass = MonetizationConfig.getPass(key)
+		if pass and s.passes[pass.key] then
+			return false, "You already own this"
+		end
+		return market:promptPass(s.player, key)
+	elseif kind == "Product" then
+		if not s.canSave then
+			return false, "Purchases need saving to work. Try again later"
+		end
+		return market:promptProduct(s.player, key)
+	elseif kind == "Offer" then
+		return buyOffer(s, key)
+	end
+	return false, "Invalid request"
+end)
+
+HatchEgg.OnServerInvoke = guard("HatchEgg", function(s, eggId: any)
+	local egg = EggConfig.get(eggId)
+	if not egg then
+		return false, "Unknown egg"
+	end
+	local d = s.data
+	-- Paid random eggs (none today: eggs cost earn-only Paw Tokens) would be gated by
+	-- PolicyService here, failing closed.
+	local restricted = if EggConfig.isPaidRandom(egg) then market:paidRandomRestricted(s.player) else false
+	local can, why = EggConfig.hatchCheck(egg, { PawTokens = d.pawTokens, Gems = d.gems }, restricted)
+	if not can then
+		return false, why
+	end
+	if egg.currency == "Gems" and s.receiptBusy > 0 then
+		return false, "Finishing your last purchase..."
+	end
+	if Inventory.isFull(d, capacity(s)) then
+		return false, "Your backpack is full"
+	end
+	if egg.currency == "Gems" then
+		d.gems -= egg.cost
+	else
+		d.pawTokens -= egg.cost
+	end
+	local species = EggConfig.pick(egg, rng:NextNumber())
+	local rec, newSpecies = addPet(s, species, "Normal", "Normal")
+	d.stats.eggsHatched += 1
+	markFull(s)
+	local rarity, rarityIndex = GameMath.overallRarity(rec)
+	CatchEffect:FireClient(s.player, {
+		kind = "hatch",
+		source = "egg",
+		eggId = egg.id,
+		pet = rec,
+		rarity = rarity,
+		rarityIndex = rarityIndex,
+		income = GameMath.petIncome(rec),
+		newSpecies = newSpecies,
+	})
+	local pet = PetConfig.get(species)
+	return true, "Hatched " .. (if pet then pet.name else "a pet")
 end)
 
 ThrowFood.OnServerEvent:Connect(onThrowFood)
@@ -493,7 +692,18 @@ local function onPlayerAdded(player: Player)
 		dirtyStats = false,
 		saving = false,
 		connections = {},
+		passes = {},
+		receiptBusy = 0,
+		pendingReceipts = {},
+		paidRandomRestricted = true,
 	}
+	-- Pass ownership and policy are read server-side before the first sync; failures
+	-- fail closed (not owned / restricted).
+	s.passes = market:ownedPasses(player)
+	s.paidRandomRestricted = market:paidRandomRestricted(player)
+	if not player.Parent then
+		return
+	end
 	sessions[player] = s
 	s.plot = plots:claim(player)
 	refreshPlot(s)
@@ -538,9 +748,61 @@ local function onPlayerRemoving(player: Player)
 	end
 	table.clear(s.connections)
 	plots:release(player)
-	saveSession(s)
+	market:forget(player)
+	saveSession(s, true)
 	sessions[player] = nil
 end
+
+------------------------------------------------------------------ purchases
+
+local receipts = Receipts.new({
+	findSession = function(userId: number)
+		local player = Players:GetPlayerByUserId(userId)
+		return if player then sessions[player] :: any else nil
+	end,
+	isPresent = function(userId: number)
+		return Players:GetPlayerByUserId(userId) ~= nil
+	end,
+	save = function(rs: any)
+		return saveSession(rs :: Session)
+	end,
+	onGranted = function(rs: any, product)
+		local session = rs :: Session
+		markFull(session)
+		notifyReward(session, "Purchase complete", string.format("+%d Gems", product.gems), 0, "Green", 0, false)
+	end,
+	wait = function(t: number)
+		task.wait(t)
+	end,
+	now = os.time,
+})
+
+-- The single ProcessReceipt callback for the whole game. Grants are only ever made here.
+MarketplaceService.ProcessReceipt = function(info)
+	local ok, decision = pcall(receipts.process, receipts, info)
+	if ok and decision == "Granted" then
+		return Enum.ProductPurchaseDecision.PurchaseGranted
+	end
+	if not ok then
+		warn("[SnackForce] ProcessReceipt error:", decision)
+	end
+	return Enum.ProductPurchaseDecision.NotProcessedYet
+end
+
+-- Pass purchases made in this server: re-verify ownership server-side before applying.
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, wasPurchased)
+	local s = sessions[player]
+	local pass = MonetizationConfig.passById(passId)
+	if not (s and pass and wasPurchased) then
+		return
+	end
+	if market:ownsPass(player, pass) then
+		s.passes[pass.key] = true
+		refreshPlot(s)
+		markFull(s)
+		notifyReward(s, "Pass unlocked", pass.name, 0, "Green", 0, true)
+	end
+end)
 
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(onPlayerRemoving)
@@ -554,7 +816,14 @@ end
 task.spawn(function()
 	while true do
 		task.wait(1)
+		local nowUnix = os.time()
 		for player, s in sessions do
+			local rush = s.data.boosts.CoinRush
+			if rush and rush > 0 and rush <= nowUnix then
+				(s.data.boosts :: any).CoinRush = nil
+				refreshPlot(s)
+				s.dirtyFull = true
+			end
 			if s.income > 0 then
 				s.data.coins += s.income
 				s.dirtyStats = true
@@ -599,7 +868,7 @@ task.spawn(function()
 		task.wait(0.25)
 		local now = os.clock()
 		for _, s in sessions do
-			if s.data.settings.AutoThrow and s.data.autoThrowUnlocked and now - s.lastThrow >= GameConfig.AutoThrowInterval then
+			if s.data.settings.AutoThrow and autoThrowAvailable(s) and now - s.lastThrow >= GameConfig.AutoThrowInterval then
 				local ok, err = pcall(performThrow :: any, s, GameConfig.AutoThrowCharge, false)
 				if not ok then
 					warn("[SnackForce] auto-throw failed:", err)

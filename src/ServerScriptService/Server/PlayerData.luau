@@ -10,6 +10,7 @@ local PetConfig = require(Config:WaitForChild("PetConfig"))
 local MutationConfig = require(Config:WaitForChild("MutationConfig"))
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local QuestConfig = require(Config:WaitForChild("QuestConfig"))
+local MonetizationConfig = require(Config:WaitForChild("MonetizationConfig"))
 
 export type Settings = {
 	AutoThrow: boolean,
@@ -17,6 +18,7 @@ export type Settings = {
 	KeepMutated: boolean,
 	ShowCutscenes: boolean,
 	ShowGuide: boolean,
+	ReduceMotion: boolean,
 	AutoSellRarity: string, -- rarity name or "Off"
 }
 
@@ -29,6 +31,7 @@ export type Stats = {
 	mutations: number,
 	fusions: number,
 	bestRarity: number,
+	eggsHatched: number,
 }
 
 export type Data = {
@@ -49,11 +52,20 @@ export type Data = {
 	questIndex: number,
 	zonesReached: { [string]: boolean },
 	lastOnline: number, -- os.time() of the last save, for offline earnings
+	-- v3
+	gems: number, -- the only Robux-purchasable currency
+	pawTokens: number, -- earn-only egg currency
+	receipts: { [string]: number }, -- PurchaseId -> os.time() granted (idempotency)
+	boosts: { [string]: number }, -- boost id -> os.time() it expires
 }
 
 local PlayerData = {}
 
-PlayerData.StatKeys = { "trains", "sweetSpots", "cravingMatches", "bestStreak", "mutations", "fusions", "bestRarity" }
+PlayerData.StatKeys = { "trains", "sweetSpots", "cravingMatches", "bestStreak", "mutations", "fusions", "bestRarity", "eggsHatched" }
+PlayerData.BoostIds = { "CoinRush" }
+-- Highest pet count a save may hold (Big Backpack owners). Capacity for new pets is
+-- enforced per session, so a save is never truncated just because a pass check failed.
+PlayerData.MaxStoredPets = GameConfig.MaxPets + MonetizationConfig.BackpackBonus
 
 function PlayerData.defaults(): Data
 	return {
@@ -75,6 +87,7 @@ function PlayerData.defaults(): Data
 			KeepMutated = true,
 			ShowCutscenes = true,
 			ShowGuide = true,
+			ReduceMotion = false,
 			AutoSellRarity = "Off",
 		},
 		stats = {
@@ -85,11 +98,41 @@ function PlayerData.defaults(): Data
 			mutations = 0,
 			fusions = 0,
 			bestRarity = 0,
+			eggsHatched = 0,
 		},
 		questIndex = 1,
 		zonesReached = {},
 		lastOnline = 0,
+		gems = 0,
+		pawTokens = 0,
+		receipts = {},
+		boosts = {},
 	}
+end
+
+-- Records a granted purchase and trims the oldest records beyond MaxReceipts.
+function PlayerData.recordReceipt(data: Data, purchaseId: string, now: number)
+	data.receipts[purchaseId] = now
+	local n = 0
+	for _ in data.receipts do
+		n += 1
+	end
+	if n <= MonetizationConfig.MaxReceipts then
+		return
+	end
+	local list = {}
+	for id, t in data.receipts do
+		table.insert(list, { id = id, t = t })
+	end
+	table.sort(list, function(a, b)
+		if a.t ~= b.t then
+			return a.t < b.t
+		end
+		return a.id < b.id
+	end)
+	for i = 1, n - MonetizationConfig.MaxReceipts do
+		data.receipts[list[i].id] = nil
+	end
 end
 
 local function num(v: any, default: number, lo: number, hi: number): number
@@ -140,7 +183,7 @@ function PlayerData.sanitize(raw: any): Data
 	local equippedCount = 0
 	if type(raw.pets) == "table" then
 		for _, p in raw.pets do
-			if #d.pets >= GameConfig.MaxPets then
+			if #d.pets >= PlayerData.MaxStoredPets then
 				break
 			end
 			if type(p) == "table" and PetConfig.get(p.species) and MutationConfig.getMaterial(p.material) and MutationConfig.getSize(p.size) then
@@ -165,8 +208,13 @@ function PlayerData.sanitize(raw: any): Data
 
 	local s = raw.settings
 	if type(s) == "table" then
+		-- Kept as saved: whether Auto-Throw may actually run (distance unlock or pass) is
+		-- checked by the server every time.
 		if type(s.AutoThrow) == "boolean" then
-			d.settings.AutoThrow = s.AutoThrow and d.autoThrowUnlocked
+			d.settings.AutoThrow = s.AutoThrow
+		end
+		if type(s.ReduceMotion) == "boolean" then
+			d.settings.ReduceMotion = s.ReduceMotion
 		end
 		if PlayerData.isRarityOrOff(s.AutoSkipRarity) then
 			d.settings.AutoSkipRarity = s.AutoSkipRarity
@@ -212,6 +260,30 @@ function PlayerData.sanitize(raw: any): Data
 	end
 	if d.bestDistance >= BiomeConfig.MoonDistance then
 		d.zonesReached.Moon = true
+	end
+
+	-- v3 fields (absent in v1/v2 saves).
+	d.gems = math.floor(num(raw.gems, 0, 0, 1e9))
+	d.pawTokens = math.floor(num(raw.pawTokens, 0, 0, 1e6))
+	if type(raw.receipts) == "table" then
+		for id, t in raw.receipts do
+			if type(id) == "string" and #id > 0 and #id <= 100 then
+				d.receipts[id] = math.floor(num(t, 0, 0, 1e11))
+			end
+		end
+		-- Re-apply the cap (and its oldest-first trimming) to whatever was loaded.
+		local first = next(d.receipts)
+		if first then
+			PlayerData.recordReceipt(d, first, d.receipts[first])
+		end
+	end
+	if type(raw.boosts) == "table" then
+		for _, id in PlayerData.BoostIds do
+			local v = raw.boosts[id]
+			if type(v) == "number" then
+				d.boosts[id] = math.floor(num(v, 0, 0, 1e11))
+			end
+		end
 	end
 	return d
 end
