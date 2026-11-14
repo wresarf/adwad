@@ -17,6 +17,7 @@ Hook: *"They locked him outside. Then something knocked from inside."*
 | `voice/script.json` | Narration script (17 lines, 185 words, English) |
 | `voice/voice.wav`, `voice/lines.json` | Synthesized narration and per-line/per-word timings (everything is timed to these) |
 | `audio/voice.py` | Offline TTS: Piper `en_US-joe-medium` (CC0 dataset). Pro dialogue lines are pitched up |
+| `audio/score.py`, `audio/cues.md` | Synthesized score and SFX (numpy/scipy), ducked under the voice, normalized to -15 LUFS, written to `public/audio/mix.wav` |
 | `src/story.ts` | Shot plan: `SHOTS`, `FLASH_AT`, `KICKS`, per-shot camera keys with smootherstep glides and creep push-ins, poses, events, caption chunks |
 | `src/World.tsx` | Forest of block pines, fenced yard and gate, log cabin with interior (fireplace, back wall), sky, moon, stars, cardboard decoy |
 | `src/Blocky.tsx` | Original block characters: Noob, Red (helmet), Green (ponytail), Blue (cap), Purple (hood, the impostor) and its void form |
@@ -24,7 +25,8 @@ Hook: *"They locked him outside. Then something knocked from inside."*
 | `src/look.ts` | Toon ramp, ink colour, painted Canvas2D textures, night and dawn light presets |
 | `src/LastNoob.tsx` | Composition: scene, vignette grade, flashes, title card, word-highlighted captions, audio |
 | `scripts/stills.mjs` | Look-check stills (`node scripts/stills.mjs out/x_ 22,137,874 0.5`) |
-| `scripts/render.sh`, `scripts/short_qa.py` | Full render, then the package's frame-by-frame QA |
+| `scripts/render.sh`, `scripts/short_qa.py` | Full 30 fps render, then the package's frame-by-frame QA |
+| `scripts/render_preview.sh` | CPU-only preview: composition `LastNoob15` (the same timeline sampled at 15 fps), 432x768, no MSAA, muxed with the mix |
 
 ## Run
 ```bash
@@ -32,6 +34,8 @@ npm install
 npx remotion browser ensure
 npm run studio                       # preview with scrubbing
 node scripts/stills.mjs out/s_ 22,137,874,1054 0.5
+python audio/score.py                # rebuild music + SFX + mix (needs numpy, scipy, ffmpeg)
+./scripts/render_preview.sh          # fast 15 fps 432x768 preview -> out/the_last_noob_preview.mp4
 ./scripts/render.sh                  # 1080x1920 master -> out/the_last_noob.mp4 (SCALE=0.5 for a fast 540x960 pass)
 # regenerate the narration (optional): pip install piper-tts, download en_US-joe-medium.onnx(.json) from rhasspy/piper-voices
 PIPER_MODEL=/path/en_US-joe-medium.onnx python audio/voice.py
