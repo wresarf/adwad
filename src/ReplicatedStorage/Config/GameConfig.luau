@@ -14,7 +14,7 @@ export type Weather = {
 local GameConfig = {}
 
 GameConfig.DataStoreName = "SnackForce_PetToss_v1"
-GameConfig.DataVersion = 1
+GameConfig.DataVersion = 4
 GameConfig.AutosaveInterval = 60
 
 -- Charge meter: a triangle wave 0 -> 1 -> 0 over ChargeCycle seconds.
@@ -31,14 +31,20 @@ GameConfig.StrengthDistanceScale = 2.5 -- distance += sqrt(strength) * scale
 GameConfig.MinChargeFactor = 0.35 -- charge 0 still throws 35% distance
 GameConfig.ThrowCooldown = 0.75
 GameConfig.ThrowLineRadius = 70 -- max studs from the Throw Line to throw manually
+-- World anchors shared by server (validation) and client (guides, previews).
+GameConfig.ThrowLineCenter = Vector3.new(0, 0, -12)
+GameConfig.GymCenter = Vector3.new(-92, 0, -46)
+GameConfig.GymRadius = 26
+GameConfig.GymMultiplier = 2 -- training inside the Gym gives double strength
 
 -- Auto-throw (late game)
 GameConfig.AutoThrowUnlockDistance = 1250 -- reach Toxic Swamp to unlock
 GameConfig.AutoThrowInterval = 3.5
 GameConfig.AutoThrowCharge = 0.85 -- never a sweet spot: manual skill stays better
 
--- Training
+-- Training (holding TRAIN repeats at TrainRepeat seconds)
 GameConfig.TrainCooldown = 0.12
+GameConfig.TrainRepeat = 0.16
 
 -- Economy
 GameConfig.StartingCoins = 25
@@ -47,6 +53,14 @@ GameConfig.MaxPets = 150
 GameConfig.PlotPedestals = 8
 GameConfig.SellSeconds = 20 -- a pet sells for this many seconds of its income (min 5)
 GameConfig.CravingMatchCoins = 15 -- base coin bonus for a craving match
+
+-- Rewards
+GameConfig.DiscoverySeconds = 40 -- first catch of a species pays this many seconds of its base income
+GameConfig.DiscoveryMinCoins = 25
+GameConfig.OfflineRate = 0.25 -- share of plot income earned while away
+GameConfig.OfflineMinSeconds = 120
+GameConfig.OfflineMaxSeconds = 2 * 3600
+GameConfig.LeaderboardInterval = 5
 
 -- Weather: an event starts every WeatherInterval seconds and lasts WeatherDuration.
 GameConfig.WeatherInterval = 90
@@ -92,6 +106,10 @@ GameConfig.RateLimits = {
 	FusePets = { rate = 4, burst = 6 },
 	AutoSell = { rate = 2, burst = 3 },
 	ToggleSetting = { rate = 5, burst = 8 },
+	StorePurchase = { rate = 2, burst = 4 },
+	HatchEgg = { rate = 3, burst = 5 },
+	ManagePet = { rate = 6, burst = 10 },
+	BuyUpgrade = { rate = 4, burst = 6 },
 }
 
 GameConfig.Rarities = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret" }

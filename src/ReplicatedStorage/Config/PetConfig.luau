@@ -5,7 +5,7 @@
 export type Pet = {
 	id: string,
 	name: string,
-	zone: string, -- biome id or "Space" / "Moon"
+	zone: string, -- biome id, "Space" / "Moon", or "Safari" (egg-exclusive, never caught by throwing)
 	rarity: string,
 	baseIncome: number,
 	craving: string,
@@ -29,7 +29,26 @@ PetConfig.RarityWeights = {
 -- Pets whose craving matches the thrown food are this much more likely.
 PetConfig.CravingWeightBonus = 2.5
 
-PetConfig.Archetypes = { "Pup", "Kitty", "Bunny", "Chick", "Slime", "Dragon", "Bear", "Frog" }
+PetConfig.Archetypes = {
+	"Pup",
+	"Kitty",
+	"Bunny",
+	"Chick",
+	"Slime",
+	"Dragon",
+	"Bear",
+	"Frog",
+	-- Safari Egg exclusives
+	"Lion",
+	"Elephant",
+	"Giraffe",
+	"Hippo",
+	"Toucan",
+	"Zebra",
+}
+
+-- Pseudo-zone for egg-exclusive species: no landing zone ever rolls these.
+PetConfig.EggZone = "Safari"
 
 local function rgb(r: number, g: number, b: number): Color3
 	return Color3.fromRGB(r, g, b)
@@ -80,6 +99,14 @@ PetConfig.Pets = {
 	{ id = "MoonBun", name = "Moon Bun", zone = "Moon", rarity = "Epic", baseIncome = 15000, craving = "Cosmic", archetype = "Bunny", bodyColor = rgb(220, 220, 235), accentColor = rgb(160, 160, 190) },
 	{ id = "LunarDragon", name = "Lunar Dragon", zone = "Moon", rarity = "Mythic", baseIncome = 60000, craving = "Cosmic", archetype = "Dragon", bodyColor = rgb(200, 210, 255), accentColor = rgb(255, 250, 200) },
 	{ id = "VoidEmperor", name = "Void Emperor", zone = "Moon", rarity = "Secret", baseIncome = 250000, craving = "Cosmic", archetype = "Bear", bodyColor = rgb(20, 10, 40), accentColor = rgb(255, 60, 255) },
+	-- Safari Egg exclusives (hatched with earn-only Paw Tokens, see Config/EggConfig)
+	{ id = "ZebraFoal", name = "Zebra Foal", zone = "Safari", rarity = "Uncommon", baseIncome = 25, craving = "Berry", archetype = "Zebra", bodyColor = rgb(245, 242, 232), accentColor = rgb(48, 44, 42) },
+	{ id = "Hippo", name = "Puddle Hippo", zone = "Safari", rarity = "Rare", baseIncome = 60, craving = "Berry", archetype = "Hippo", bodyColor = rgb(150, 140, 170), accentColor = rgb(235, 170, 180) },
+	{ id = "Toucan", name = "Toco Toucan", zone = "Safari", rarity = "Rare", baseIncome = 70, craving = "Berry", archetype = "Toucan", bodyColor = rgb(45, 45, 52), accentColor = rgb(250, 160, 40) },
+	{ id = "LionCub", name = "Lion Cub", zone = "Safari", rarity = "Epic", baseIncome = 180, craving = "Meat", archetype = "Lion", bodyColor = rgb(230, 180, 100), accentColor = rgb(170, 95, 45) },
+	{ id = "Giraffe", name = "Tall Giraffe", zone = "Safari", rarity = "Epic", baseIncome = 400, craving = "Berry", archetype = "Giraffe", bodyColor = rgb(240, 200, 110), accentColor = rgb(160, 95, 50) },
+	{ id = "Elephant", name = "Baby Elephant", zone = "Safari", rarity = "Legendary", baseIncome = 1200, craving = "Berry", archetype = "Elephant", bodyColor = rgb(160, 168, 180), accentColor = rgb(235, 175, 185) },
+	{ id = "SunmaneLion", name = "Sunmane Lion", zone = "Safari", rarity = "Mythic", baseIncome = 5000, craving = "Meat", archetype = "Lion", bodyColor = rgb(250, 215, 120), accentColor = rgb(225, 120, 40) },
 } :: { Pet }
 
 local byId: { [string]: Pet } = {}
@@ -99,6 +126,11 @@ function PetConfig.get(id: string?): Pet?
 		return nil
 	end
 	return byId[id]
+end
+
+function PetConfig.isEggExclusive(id: string?): boolean
+	local p = PetConfig.get(id)
+	return p ~= nil and p.zone == PetConfig.EggZone
 end
 
 function PetConfig.forZone(zoneId: string): { Pet }

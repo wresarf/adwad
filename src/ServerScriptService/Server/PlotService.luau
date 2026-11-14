@@ -54,6 +54,7 @@ function PlotService.release(self: PlotService, player: Player)
 	plot.petsFolder:ClearAllChildren()
 	plot.model:SetAttribute("OwnerUserId", nil)
 	plot.ownerLabel.Text = "Free Plot"
+	plot.petCount = 0
 	plot.incomeLabel.Text = "+0 / sec"
 end
 
@@ -100,13 +101,15 @@ function PlotService.render(self: PlotService, player: Player, data: any, income
 		return
 	end
 	plot.petsFolder:ClearAllChildren()
-	plot.incomeLabel.Text = "+" .. GameMath.formatNumber(income) .. " / sec"
 	local equipped = {}
 	for _, p in data.pets do
 		if p.equipped then
 			table.insert(equipped, p)
 		end
 	end
+	-- The gate sign shows income and how full the plot is (the capacity at a glance).
+	plot.petCount = math.min(#equipped, #plot.pedestals)
+	plot.incomeLabel.Text = PlotService.signText(income, plot.petCount or 0, #plot.pedestals)
 	table.sort(equipped, function(a, b)
 		return GameMath.petIncome(a) > GameMath.petIncome(b)
 	end)
@@ -131,8 +134,12 @@ end
 function PlotService.setIncome(self: PlotService, player: Player, income: number)
 	local plot = self.owners[player]
 	if plot then
-		plot.incomeLabel.Text = "+" .. GameMath.formatNumber(income) .. " / sec"
+		plot.incomeLabel.Text = PlotService.signText(income, plot.petCount or 0, #plot.pedestals)
 	end
+end
+
+function PlotService.signText(income: number, pets: number, slots: number): string
+	return string.format("+%s / sec  ·  %d/%d pets", GameMath.formatNumber(income), pets, slots)
 end
 
 return PlotService
