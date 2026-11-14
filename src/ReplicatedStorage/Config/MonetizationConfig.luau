@@ -51,7 +51,7 @@ MonetizationConfig.FreePerks = {
 	{ key = "DoubleCoins", name = "Double Coins", description = "Your plot earns 2x coins.", icon = "2x" },
 	{ key = "EarlyAutoThrow", name = "Auto-Throw", description = "Use Auto-Throw from the start.", icon = "A" },
 	{ key = "BigBackpack", name = "Big Backpack", description = "Hold 150 more pets.", icon = "+" },
-	{ key = "GoldenTrail", name = "Golden Trail", description = "A gold trail behind every snack. Turn it off in Settings.", icon = "*" },
+	{ key = "GoldenTrail", name = "Golden Trail", description = "A gold trail behind every snack.", icon = "*" },
 } :: { Perk }
 
 -- The perk set every session gets (a fresh table each time, never saved).
