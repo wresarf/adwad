@@ -89,8 +89,8 @@ const Scene: React.FC<{ s: State }> = ({ s }) => {
       <ambientLight intensity={lerp(N.ambient, D.ambient, d)} />
       <directionalLight position={keyPos} color={d < 0.5 ? N.moon : D.moon} intensity={d < 0.5 ? lerp(N.moonI, 0.4, d * 2) : lerp(0.4, D.moonI, (d - 0.5) * 2)} />
       {/* interior: warm ceiling lamp + fire (stays on all night) */}
-      <pointLight position={[0.5, 3.4, 0.2]} color="#ffc27a" intensity={22 * (1 - d * 0.7)} distance={8} decay={1.6} />
-      <pointLight position={[CABIN.fire[0] + 0.7, 1.1, CABIN.fire[2]]} color="#ff9a4a" intensity={16 * flick * (1 - d * 0.7)} distance={9} decay={1.6} />
+      <pointLight position={[0.5, 3.4, 0.2]} color="#ffd9b0" intensity={14 * (1 - d * 0.7)} distance={8} decay={1.6} />
+      <pointLight position={[CABIN.fire[0] + 0.7, 1.1, CABIN.fire[2]]} color="#ff9a4a" intensity={13 * flick * (1 - d * 0.7)} distance={9} decay={1.6} />
       {exterior && <pointLight position={[1.7, 1.9, 5.0]} color="#ffbe72" intensity={7 * (1 - d)} distance={9} decay={1.6} />}
       {s.lantern && <pointLight position={s.lantern.pos} color="#ffc35a" intensity={6 * s.lantern.on} distance={8 + s.lantern.on * 2} decay={1.6} />}
 
@@ -100,10 +100,17 @@ const Scene: React.FC<{ s: State }> = ({ s }) => {
       <Forest sway={s.sway} t={s.t} shadow={gMat} />
       <Cabin {...s.cabin} t={s.t} />
       <Fence open={s.gate} />
-      <LaneProps />
+      {d < 0.05 && <LaneProps />}
+      {s.moonPatch > 0 && (
+        // pale moonlit ground in the decoy's lane: the props' shadows cross it, the decoy's feet have none
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.008, 19.8]} renderOrder={-1}>
+          <circleGeometry args={[4.2, 40]} />
+          <meshBasicMaterial color="#b9c9ff" transparent opacity={0.32 * s.moonPatch} depthWrite={false} blending={THREE.AdditiveBlending} />
+        </mesh>
+      )}
       <ShadowContext.Provider value={gMat}>
         <Fence open={s.gate} />
-        <LaneProps />
+        {d < 0.05 && <LaneProps />}
       </ShadowContext.Provider>
       {/* character shadows: the rig flattened onto the ground along the key light (opaque tint, no overlap darkening) */}
       <ShadowContext.Provider value={groundShadowMat(d, 1)}>
@@ -155,21 +162,23 @@ const WALL_SHADOW = new THREE.MeshBasicMaterial({ color: "#140a0c", transparent:
 const FONT = "LilitaOne";
 const fontCss = `@font-face { font-family: '${FONT}'; src: url('${staticFile("fonts/LilitaOne-Regular.ttf")}') format('truetype'); }`;
 
-const Captions: React.FC<{ t: number; scale: number }> = ({ t, scale }) => {
+const Captions: React.FC<{ t: number; scale: number; hook: boolean }> = ({ t, scale, hook }) => {
   const c = CHUNKS.find((k) => t >= k.s && t < k.e);
   if (!c) return null;
-  const pop = Math.min(1, (t - c.s) / 0.08);
+  const u = Math.min(1, (t - c.s) / 0.12);
+  const pop = 1 + 0.14 * Math.sin(u * Math.PI) * (1 - u * 0.5) - 0.1 * (1 - u);
+  const size = (hook ? 118 : 96) * scale;
   return (
-    <div style={{ position: "absolute", left: 0, right: 0, top: `${62 * 1}%`, display: "flex", justifyContent: "center", padding: `0 ${70 * scale}px` }}>
+    <div style={{ position: "absolute", left: 0, right: 0, top: hook ? "52%" : "60%", display: "flex", justifyContent: "center", padding: `0 ${90 * scale}px` }}>
       <div style={{
-        fontFamily: FONT, fontSize: 92 * scale, lineHeight: 1.05, textAlign: "center", color: "#fff",
-        WebkitTextStroke: `${14 * scale}px #0b0a0c`, paintOrder: "stroke fill", letterSpacing: 1 * scale,
-        textShadow: `0 ${6 * scale}px 0 rgba(0,0,0,0.45)`, transform: `scale(${0.9 + 0.1 * pop})`, textTransform: "uppercase",
+        fontFamily: FONT, fontSize: size, lineHeight: 1.04, textAlign: "center", color: "#fff",
+        WebkitTextStroke: `${(hook ? 18 : 15) * scale}px #0b0a0c`, paintOrder: "stroke fill", letterSpacing: 1.5 * scale,
+        textShadow: `0 ${8 * scale}px 0 rgba(0,0,0,0.55), 0 0 ${30 * scale}px rgba(0,0,0,0.5)`, transform: `scale(${pop})`, textTransform: "uppercase",
       }}>
         {c.words.map((w, i) => {
           const active = t >= w.s && (i === c.words.length - 1 || t < c.words[i + 1].s);
           return (
-            <span key={i} style={{ color: active ? (c.speaker === "pro" ? "#ff9b8f" : "#ffd84a") : "#ffffff" }}>
+            <span key={i} style={{ color: active ? (c.speaker === "pro" ? "#ff8f80" : hook ? "#ff5a4e" : "#ffd84a") : "#ffffff" }}>
               {w.w.replace(/[,.]$/, "")}{i < c.words.length - 1 ? " " : ""}
             </span>
           );
@@ -199,11 +208,16 @@ export const LastNoob: React.FC = () => {
       <ThreeCanvas width={width} height={height} gl={{ antialias: getInputProps().aa !== false, stencil: true }} dpr={1}>
         <Scene s={s} />
       </ThreeCanvas>
-      {/* grade: cool vignette at night, warm lift at dawn */}
-      <AbsoluteFill style={{ background: `radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 55%, rgba(${s.dawn > 0.5 ? "60,20,10" : "5,8,30"},0.55) 100%)` }} />
+      {/* grade: split tone (cool sky, warm ground light), vignette, red pulse on the hook knocks */}
+      <AbsoluteFill style={{ mixBlendMode: "soft-light", background: s.dawn > 0.5
+        ? "linear-gradient(180deg, rgba(120,150,255,0.35) 0%, rgba(255,190,120,0.45) 100%)"
+        : "linear-gradient(180deg, rgba(40,80,200,0.55) 0%, rgba(255,160,80,0.30) 100%)" }} />
+      <AbsoluteFill style={{ background: `radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 50%, rgba(${s.hook ? "70,0,10" : s.dawn > 0.5 ? "60,20,10" : "5,8,30"},${s.hook ? 0.7 : 0.55}) 100%)` }} />
+      {/* letterbox-safe top shade so the title / sky stays deep */}
+      <AbsoluteFill style={{ background: "linear-gradient(180deg, rgba(0,0,10,0.35) 0%, rgba(0,0,0,0) 22%)" }} />
       {s.flash > 0 && <AbsoluteFill style={{ background: s.shot === 15 ? "#fff3cf" : "#fff", opacity: s.flash }} />}
       <Title a={s.title} scale={scale} />
-      {props.captions !== false && <Captions t={frame / 30} scale={scale} />}
+      {props.captions !== false && <Captions t={frame / 30} scale={scale} hook={s.hook > 0} />}
       {props.audio !== false && <Audio src={staticFile("audio/mix.wav")} />}
     </AbsoluteFill>
   );

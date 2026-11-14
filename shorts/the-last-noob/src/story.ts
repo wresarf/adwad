@@ -77,7 +77,7 @@ export type State = {
   cabin: { frontDoor: number; backDoor: number; roof: boolean; fire: number; frontWall: boolean };
   gate: number; sway: number;
   lantern: { on: number; pos: V3 } | null;
-  beam: number; flash: number; title: number; interior: number;
+  beam: number; flash: number; title: number; interior: number; moonPatch: number; hook: number;
 };
 
 type Key = { t: number; pos: V3; look: V3; fov?: number; roll?: number };
@@ -135,11 +135,11 @@ export function stateAt(f: number): State {
     actors: [], wallShadow: null, ghostShadow: null,
     decoy: { x: 0, z: 44, walk: 0, eyes: 0, yaw: Math.PI, collapse: 0, visible: false },
     cabin: { frontDoor: 0, backDoor: 0, roof: true, fire: 1, frontWall: true },
-    gate: 0, sway: 0, lantern: null, beam: 0, flash: 0, title: 0, interior: 0,
+    gate: 0, sway: 0, lantern: null, beam: 0, flash: 0, title: 0, interior: 0, moonPatch: 0, hook: 0,
   };
   const add = (key: string, who: string, pose: Pose, extra: Partial<Actor> = {}) => S.actors.push({ key, who, pose, shadow: true, ...extra });
   const sitPurple = (fc: Face = "neutral", headYaw = 0) =>
-    add("purple", "purple", { x: STOOL[0], y: STOOL[1], z: STOOL[2], yaw: -Math.PI / 2 + 0.35, sit: 1, armL: 0.5, armR: 0.5, headYaw, face: face(t, 4, fc) }, { shadow: false });
+    add("purple", "purple", { x: STOOL[0], y: STOOL[1], z: STOOL[2], yaw: -Math.PI / 2 + 0.9, sit: 1, armL: 0.5, armR: 0.5, headYaw, face: face(t, 4, fc) }, { shadow: false });
   const prosAtWindow = (fc: Face = "scared", lean = 0.12) => {
     for (const [k, p] of Object.entries(PRO_WIN)) add(k, k, { x: p[0], z: p[2], yaw: 0, lean, armL: 0.9, armR: 0.9, armLz: 0.1, armRz: 0.1, face: face(t, k.length, fc) }, { shadow: false });
   };
@@ -157,9 +157,10 @@ export function stateAt(f: number): State {
     case 1: { // They locked him outside: the door slams in his face
       S.cabin.frontDoor = 1 - ss(0.28, SLAM1, t);
       const back = ss(SLAM1, SLAM1 + 0.3, t) * 0.35;
-      add("noob", "noob", { x: -2.3, z: 4.55 + back, yaw: Math.PI, armL: 0.6 * (1 - ss(0.2, 0.6, t)), face: t < SLAM1 ? "smile" : "scared", lean: -back * 0.3 });
-      add("red", "red", { x: -2.2, z: 2.2, yaw: 0, armR: 1.2 * (1 - ss(0.4, 0.7, t)), face: "angry" }, { shadow: false });
-      S.cam = camKeys(t, t0, [{ t: 0, pos: [0.9, 1.45, 8.4], look: [-2.3, 1.7, 4.0], fov: 40 }, { t: 1.2, pos: [0.4, 1.5, 7.6], look: [-2.3, 1.75, 4.0], fov: 38 }], 0.08);
+      const jump = Math.exp(-Math.max(0, t - SLAM1) * 9) * (t >= SLAM1 ? 1 : 0);
+      add("noob", "noob", { x: -2.3, z: 4.75 + back, yaw: 0.25 - ss(SLAM1, SLAM1 + 0.25, t) * 0.4, headYaw: -ss(SLAM1, SLAM1 + 0.2, t) * 0.5, armL: 0.6 * (1 - ss(0.2, 0.6, t)) + jump * 1.2, armR: jump * 1.2, face: t < SLAM1 ? "smile" : "scared", squash: 1 - jump * 0.08, lean: back * 0.2 });
+      add("red", "red", { x: -2.2, z: 2.4, yaw: 0, armR: 1.2 * (1 - ss(0.4, 0.7, t)), face: "angry" }, { shadow: false });
+      S.cam = camKeys(t, t0, [{ t: 0, pos: [-1.2, 1.55, 9.6], look: [-2.3, 1.75, 4.2], fov: 44 }, { t: SLAM1, pos: [-1.5, 1.6, 8.4], look: [-2.3, 1.8, 4.4], fov: 36 }, { t: 1.4, pos: [-1.6, 1.65, 8.0], look: [-2.3, 1.85, 4.4], fov: 34 }], 0.04);
       break;
     }
     case 2: { // Then something knocked from inside
@@ -167,8 +168,8 @@ export function stateAt(f: number): State {
       for (const k of KNOCKS) knock += Math.exp(-Math.max(0, t - k) * 18) * (t >= k ? 1 : 0);
       S.cabin.frontDoor = knock * 0.012;
       const back = 0.35 + ss(KNOCKS[0], KNOCKS[0] + 0.4, t) * 0.5;
-      add("noob", "noob", { x: -2.0, z: 4.55 + back, yaw: Math.PI - 0.5 + ss(KNOCKS[0], KNOCKS[0] + 0.3, t) * 0.25, armL: 0.5, armR: 0.5 * ss(KNOCKS[0], KNOCKS[2], t), face: "scared", squash: 1 - knock * 0.04, lean: -0.08 });
-      S.cam = camKeys(t, t0, [{ t: t0, pos: [1.6, 1.3, 8.4], look: [-2.3, 1.7, 3.8], fov: 36, roll: 0 }, { t: KNOCKS[0], pos: [1.3, 1.2, 7.9], look: [-2.3, 1.7, 3.8], fov: 34, roll: -0.07 }], 0.1);
+      add("noob", "noob", { x: -1.1, z: 4.55 + back, yaw: Math.PI - 0.5 + ss(KNOCKS[0], KNOCKS[0] + 0.3, t) * 0.25, armL: 0.5, armR: 0.5 * ss(KNOCKS[0], KNOCKS[2], t), face: "scared", squash: 1 - knock * 0.04, lean: -0.08 });
+      S.cam = camKeys(t, t0, [{ t: t0, pos: [-3.4, 0.9, 8.6], look: [-1.5, 1.7, 4.4], fov: 42, roll: 0 }, { t: KNOCKS[0], pos: [-3.2, 0.85, 8.0], look: [-1.6, 1.75, 4.4], fov: 38, roll: 0.07 }], 0.06);
       break;
     }
     case 3: { // Night one on the Pinewood server: aerial over the clearing
@@ -193,7 +194,7 @@ export function stateAt(f: number): State {
       add("red", "red", { x: -2.3, z: 2.75 - ss(SLAM2 - 0.4, SLAM2 - 0.1, t) * 0.8, yaw: 0, armR: point * 1.45, face: face(t, 1, "shout") }, { shadow: false });
       add("green", "green", { x: -1.4, z: 1.6, yaw: -0.3, face: "angry" }, { shadow: false });
       add("noob", "noob", { x: -2.2, z: 4.7, yaw: Math.PI + 0.1, face: "sad" });
-      S.cam = camKeys(t, t0, [{ t: t0, pos: [0.6, 2.0, 7.4], look: [-2.3, 1.9, 3.0], fov: 34 }, { t: W("nonoobs", 2), pos: [0.3, 2.0, 7.0], look: [-2.3, 1.9, 3.0], fov: 32 }], 0.05);
+      S.cam = camKeys(t, t0, [{ t: t0, pos: [1.9, 2.1, 8.8], look: [-2.3, 1.8, 3.0], fov: 38 }, { t: W("nonoobs", 2), pos: [1.5, 2.05, 8.2], look: [-2.3, 1.85, 3.0], fov: 34 }], 0.03);
       break;
     }
     case 6: { // waits by the gate with a starter lantern
@@ -230,6 +231,7 @@ export function stateAt(f: number): State {
       S.lantern = { on: 0.6, pos: [1.0, 1.1, GATE_Z - 0.4] };
       S.cabin.frontDoor = 0;
       const down = ss(W("wait", 9), W("wait", 11), t);
+      S.moonPatch = ss(W("wait", 2), W("wait", 5), t);
       S.cam = camKeys(t, t0, [
         { t: t0, pos: [6.2, 0.55, 13.5], look: [0.6, 5.2, 24], fov: 52, roll: -0.06 },
         { t: W("wait", 3), pos: [5.6, 0.6, 13.8], look: [0.4, 6.2, 24], fov: 50, roll: -0.06 },
@@ -288,7 +290,7 @@ export function stateAt(f: number): State {
       const turn = ss(W("fire", 4), W("fire", 6), t);
       sitPurple(turn > 0.5 ? "sly" : "neutral", turn * 0.9);
       S.wallShadow = { x: STOOL[0], y: STOOL[1], z: STOOL[2], yaw: -Math.PI / 2 + 0.35, sit: 1, armL: 0.5, armR: 0.5, headYaw: turn * 0.9 };
-      S.cam = camKeys(t, t0, [{ t: t0, pos: [0.3, 1.55, 1.3], look: [-2.3, 1.55, -1.2], fov: 32 }, { t: shot.b / FPS, pos: [-0.4, 1.55, 0.6], look: [-2.3, 1.6, -1.2], fov: 30 }], 0.03);
+      S.cam = camKeys(t, t0, [{ t: t0, pos: [1.1, 1.9, 1.8], look: [-2.4, 1.4, -1.4], fov: 40 }, { t: shot.b / FPS, pos: [0.4, 1.75, 1.0], look: [-2.4, 1.5, -1.4], fov: 34 }], 0.02);
       break;
     }
     case 15: { // He lifts his lantern and flashes it through the glass
@@ -301,7 +303,7 @@ export function stateAt(f: number): State {
       S.lantern = { on: 0.6 + flash * 6, pos: [p.x + 0.3, 1.2 + lift * 1.3, p.z - 0.4] };
       S.flash = flash * 0.55;
       S.beam = ss(LANTERN_FLASH - 0.05, LANTERN_FLASH + 0.05, t);
-      S.cam = camKeys(t, t0, [{ t: t0, pos: [5.4, 1.8, 9.2], look: [1.8, 1.8, 4.2], fov: 40 }, { t: W("lantern", 6), pos: [4.4, 2.0, 7.8], look: [1.8, 2.3, 4.0], fov: 38 }], 0.03);
+      S.cam = camKeys(t, t0, [{ t: t0, pos: [6.6, 2.0, 9.8], look: [1.8, 1.8, 5.0], fov: 46 }, { t: W("lantern", 6), pos: [5.6, 2.2, 7.4], look: [1.8, 2.3, 4.4], fov: 40 }], 0.02);
       break;
     }
     case 16: { // the light hits the fake player, and its disguise flickers away
@@ -328,7 +330,7 @@ export function stateAt(f: number): State {
         const w = walkPath([p, [-0.6, 0, -1.8], [-1.0, 0, -5.5]], t, run + i * 0.18, 4.6);
         add(k, k, { x: w.x, z: w.z, yaw: w.moving ? w.yaw : Math.PI + 0.6, walk: w.walk, stride: w.moving ? 1 : 0, face: "scared" }, { shadow: false });
       });
-      S.cam = camKeys(t, t0, [{ t: t0, pos: [1.9, 1.9, 1.6], look: [-1.2, 1.5, -3.4], fov: 50 }, { t: shot.b / FPS, pos: [1.6, 1.8, 1.0], look: [-1.2, 1.6, -3.4], fov: 46 }], 0.03);
+      S.cam = camKeys(t, t0, [{ t: t0, pos: [3.4, 2.6, -1.4], look: [-1.2, 1.4, -3.8], fov: 48 }, { t: shot.b / FPS, pos: [3.1, 2.5, -1.8], look: [-1.2, 1.5, -3.8], fov: 44 }], 0.03);
       break;
     }
     case 18: { // They sprint through the gate as the shadow melts in the sunrise
@@ -379,6 +381,7 @@ export function stateAt(f: number): State {
       break;
     }
   }
+  S.hook = shot.id <= 2 ? 1 : 0;
   // impact flip-shakes: sign flips every frame, decays over 7 frames
   let kick = 0;
   for (const [k, a] of KICKS) {
