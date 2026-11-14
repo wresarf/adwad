@@ -37,6 +37,14 @@ export type Ctx = {
 	onSkip: () -> (),
 }
 
+-- Plays a sound cue if the client wired a Sound player in (absent in headless tools).
+local function sfx(owner: any, name: string, at: Vector3?, pitch: number?)
+	local player: any = owner.sound
+	if player then
+		player:play(name, at, pitch)
+	end
+end
+
 local Hud = {}
 Hud.__index = Hud
 
@@ -844,6 +852,13 @@ function Hud:toast(text: string, color: Color3?)
 		end
 	end
 	local accent = color or C.Teal
+	if self.sound then
+		if accent == C.Terracotta then
+			sfx(self, "Error", nil, nil)
+		elseif accent == C.Leaf then
+			sfx(self, "Buy", nil, nil)
+		end
+	end
 	local t = UI.surface(self.toastHolder, UDim2.fromOffset(0, 40), nil, C.Ivory, UI.Radius.pill)
 	t.AutomaticSize = Enum.AutomaticSize.X
 	t:SetAttribute("Text", text)
@@ -916,6 +931,12 @@ function Hud:showReward(payload: any)
 			self.rewardCoins.Text = table.concat(parts, "  ·  ")
 			self.rewardCoins.Visible = #parts > 0
 			self.reward.Visible = true
+			if self.sound then
+				sfx(self, if p.milestone then "Milestone" else "Reward", nil, nil)
+				if p.milestone then
+					sfx(self, "Reward")
+				end
+			end
 			UI.pop(self.reward, if p.milestone then 0.15 else 0.06)
 			if p.milestone then
 				UI.flash(self.gui, accent, 0.25)
@@ -982,6 +1003,9 @@ function Hud:showHatch(payload: any)
 				if self.hatchSkip then
 					break
 				end
+				if self.sound then
+					sfx(self, "Wobble", nil, 0.9 + i * 0.12)
+				end
 				UI.tween(eggArt, 0.12, { Rotation = (6 + i * 4) * (if i % 2 == 0 then -1 else 1) })
 				task.wait(0.14)
 				UI.tween(eggArt, 0.12, { Rotation = 0 })
@@ -990,6 +1014,10 @@ function Hud:showHatch(payload: any)
 		end
 		self.hatchRevealing = false
 		eggArt.Visible = false
+		if self.sound then
+			sfx(self, if payload.source == "fuse" then "Fuse" else "Hatch", nil, nil)
+			sfx(self, "Reward")
+		end
 		if pet and self.hatch.Visible then
 			UI.petViewport(view, rec, UDim2.fromScale(1, 1), UDim2.new())
 		end

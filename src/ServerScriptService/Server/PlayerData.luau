@@ -20,6 +20,9 @@ export type Settings = {
 	ShowCutscenes: boolean,
 	ShowGuide: boolean,
 	ReduceMotion: boolean,
+	GoldenTrail: boolean, -- cosmetic free perk, on by default
+	Sfx: boolean, -- sound effects
+	Music: boolean, -- music / ambience (only plays when an audio id is configured)
 	AutoSellRarity: string, -- rarity name or "Off"
 }
 
@@ -91,6 +94,9 @@ function PlayerData.defaults(): Data
 			ShowCutscenes = true,
 			ShowGuide = true,
 			ReduceMotion = false,
+			GoldenTrail = true,
+			Sfx = true,
+			Music = true,
 			AutoSellRarity = "Off",
 		},
 		stats = {
@@ -219,6 +225,11 @@ function PlayerData.sanitize(raw: any): Data
 		end
 		if type(s.ReduceMotion) == "boolean" then
 			d.settings.ReduceMotion = s.ReduceMotion
+		end
+		for _, key in { "GoldenTrail", "Sfx", "Music" } do
+			if type(s[key]) == "boolean" then
+				(d.settings :: any)[key] = s[key]
+			end
 		end
 		if PlayerData.isRarityOrOff(s.AutoSkipRarity) then
 			d.settings.AutoSkipRarity = s.AutoSkipRarity

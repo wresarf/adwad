@@ -1,5 +1,5 @@
 --!strict
--- MarketplaceService / PolicyService wrapper: game pass ownership, Robux prices for the
+-- MarketplaceService / PolicyService wrapper: Robux prices for the
 -- store, purchase prompts and the paid-random-items policy gate. Services are injectable
 -- for the test-suite. Every Roblox call is pcall'd; failures fail closed (not owned, not
 -- purchasable, paid random items restricted).
@@ -64,9 +64,6 @@ function MarketService.refreshPrices(self: Market)
 			self.prices[slot] = { status = "ok", price = info.PriceInRobux }
 		end
 	end
-	for _, p in MonetizationConfig.GamePasses do
-		fetch("pass", p.key, p.id, Enum.InfoType.GamePass)
-	end
 	for _, p in MonetizationConfig.Products do
 		fetch("product", p.key, p.id, Enum.InfoType.Product)
 	end
@@ -87,12 +84,6 @@ end
 
 -- True when any configured offer still needs a (re)fetch: never fetched or errored.
 function MarketService.needsRefresh(self: Market): boolean
-	for _, p in MonetizationConfig.GamePasses do
-		local status = priceOf(self, "pass:" .. p.key, p.id)
-		if status == "loading" or status == "error" then
-			return true
-		end
-	end
 	for _, p in MonetizationConfig.Products do
 		local status = priceOf(self, "product:" .. p.key, p.id)
 		if status == "loading" or status == "error" then
@@ -103,38 +94,13 @@ function MarketService.needsRefresh(self: Market): boolean
 end
 
 -- Store listing sent to clients (no ids: the client never prompts by itself).
-function MarketService.catalog(self: Market): { passes: { Listing }, products: { Listing } }
-	local passes, products = {}, {}
-	for _, p in MonetizationConfig.GamePasses do
-		local status, price = priceOf(self, "pass:" .. p.key, p.id)
-		table.insert(passes, { key = p.key, name = p.name, description = p.description, icon = p.icon, status = status, price = price })
-	end
+function MarketService.catalog(self: Market): { products: { Listing } }
+	local products = {}
 	for _, p in MonetizationConfig.Products do
 		local status, price = priceOf(self, "product:" .. p.key, p.id)
 		table.insert(products, { key = p.key, name = p.name, description = string.format("%d Gems", p.gems), gems = p.gems, status = status, price = price })
 	end
-	return { passes = passes, products = products }
-end
-
--- Server-side ownership check. Unconfigured passes are never owned.
-function MarketService.ownsPass(self: Market, player: Player, pass: MonetizationConfig.GamePass): boolean
-	if not MonetizationConfig.isConfigured(pass.id) then
-		return false
-	end
-	local ok, owns = pcall(function()
-		return self.marketplace:UserOwnsGamePassAsync(player.UserId, pass.id)
-	end)
-	return ok and owns == true
-end
-
-function MarketService.ownedPasses(self: Market, player: Player): { [string]: boolean }
-	local owned = {}
-	for _, pass in MonetizationConfig.GamePasses do
-		if self:ownsPass(player, pass) then
-			owned[pass.key] = true
-		end
-	end
-	return owned
+	return { products = products }
 end
 
 local function promptable(self: Market, slot: string, id: number): (boolean, string)
@@ -146,21 +112,6 @@ local function promptable(self: Market, slot: string, id: number): (boolean, str
 		return false, "Not on sale right now"
 	end
 	return true, ""
-end
-
-function MarketService.promptPass(self: Market, player: Player, key: any): (boolean, string)
-	local pass = MonetizationConfig.getPass(key)
-	if not pass then
-		return false, "Unknown item"
-	end
-	local can, why = promptable(self, "pass:" .. pass.key, pass.id)
-	if not can then
-		return false, why
-	end
-	local ok = pcall(function()
-		self.marketplace:PromptGamePassPurchase(player, pass.id)
-	end)
-	return ok, if ok then "Opening purchase..." else "Store unavailable, try again"
 end
 
 function MarketService.promptProduct(self: Market, player: Player, key: any): (boolean, string)

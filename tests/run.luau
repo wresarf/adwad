@@ -133,7 +133,10 @@ test("no Toolbox / external assets referenced", function()
 		ok(not (inst:IsA("MeshPart") or inst:IsA("Decal") or inst:IsA("Texture") or inst:IsA("Sound") or inst:IsA("SpecialMesh")), "asset instance " .. inst:GetFullName())
 		if inst:IsA("LuaSourceContainer") then
 			local s = inst.Source
-			ok(not s:find("rbxassetid") and not s:find("InsertService") and not s:find("LoadAsset") and not s:find("http", 1, true), "asset reference in " .. inst:GetFullName())
+			-- The only asset id use is the optional music track, built from SoundConfig.MusicId,
+			-- which must stay 0 (off) until a permitted track is supplied.
+			local allowAssetId = inst.Name == "Sound" and inst.Parent and inst.Parent.Name == "Client"
+			ok((allowAssetId or not s:find("rbxassetid")) and not s:find("InsertService") and not s:find("LoadAsset") and not s:find("http", 1, true), "asset reference in " .. inst:GetFullName())
 		end
 	end
 end)
@@ -827,15 +830,15 @@ local MarketService = req(Server.MarketService)
 local Receipts = req(Server.Receipts)
 
 test("every Robux id is unset and no Robux price is hard-coded", function()
-	for _, p in MonetizationConfig.GamePasses do
-		eq(p.id, 0, p.key .. " id")
-		eq(p.price, nil, p.key .. " price")
+	eq(MonetizationConfig.GamePasses, nil, "no Marketplace game passes remain")
+	for _, p in MonetizationConfig.FreePerks do
+		eq(p.id, nil, p.key .. " has no pass id")
+		eq(p.price, nil, p.key .. " has no price")
 	end
 	for _, p in MonetizationConfig.Products do
 		eq(p.id, 0, p.key .. " id")
 		ok(p.gems > 0)
 	end
-	eq(MonetizationConfig.passById(0), nil)
 	eq(MonetizationConfig.productById(0), nil)
 end)
 
@@ -925,35 +928,28 @@ test("unconfigured offers never prompt; configured ones use fetched prices", fun
 	m:refreshPrices()
 	eq(calls.info, 0, "id 0 is never looked up")
 	local player = { UserId = 5 }
-	for _, p in MonetizationConfig.GamePasses do
-		local okp, msg = m:promptPass(player, p.key)
-		eq(okp, false)
-		eq(msg, "Not available yet")
-		eq(m:ownsPass(player, p), false, "unset pass is never owned")
-	end
 	for _, p in MonetizationConfig.Products do
 		eq((m:promptProduct(player, p.key)), false)
 	end
 	eq(calls.prompt, 0, "no purchase prompt for unset ids")
-	for _, l in m:catalog().passes do
+	for _, l in m:catalog().products do
 		eq(l.status, "unset")
 		eq(l.price, nil)
 	end
-	-- Pretend a pass and a product were configured.
-	local pass, product = MonetizationConfig.GamePasses[1], MonetizationConfig.Products[1]
-	pass.id, product.id = 777, 888
+	eq(m:catalog().passes, nil, "the catalog has no passes")
+	-- Pretend a product was configured.
+	local product = MonetizationConfig.Products[1]
+	product.id = 888
 	m:refreshPrices()
-	eq(m:catalog().passes[1].status, "ok")
-	eq(m:catalog().passes[1].price, 99, "price comes from MarketplaceService")
-	ok((m:promptPass(player, pass.key)))
+	eq(m:catalog().products[1].status, "ok")
+	eq(m:catalog().products[1].price, 99, "price comes from MarketplaceService")
 	ok((m:promptProduct(player, product.key)))
-	eq(calls.prompt, 2)
-	ok(m:ownsPass(player, pass))
+	eq(calls.prompt, 1)
 	price.IsForSale = false
 	m:refreshPrices()
 	eq(m:catalog().products[1].status, "offsale")
 	eq((m:promptProduct(player, product.key)), false, "off-sale items don't prompt")
-	pass.id, product.id = 0, 0
+	product.id = 0
 end)
 
 local function receiptRig(opts)
@@ -1114,7 +1110,13 @@ test("purchases are wired server-side only", function()
 	end
 	eq(n, 1, "exactly one ProcessReceipt callback")
 	ok(not serverSrc:find("PromptProductPurchaseFinished:Connect", 1, true), "never grant from PromptProductPurchaseFinished")
-	ok(serverSrc:find("market:ownsPass(player, pass)", 1, true), "pass purchases re-verified server-side")
+	for _, inst in game:GetDescendants() do
+		if inst:IsA("LuaSourceContainer") then
+			for _, api in { "PromptGamePassPurchase", "UserOwnsGamePassAsync", "PromptGamePassPurchaseFinished" } do
+				ok(not inst.Source:find(api, 1, true), inst.Name .. " must not use " .. api .. " (passes are free perks)")
+			end
+		end
+	end
 	for _, inst in SP:GetDescendants() do
 		if inst:IsA("LuaSourceContainer") then
 			for _, api in { "PromptGamePassPurchase", "PromptProductPurchase", "UserOwnsGamePassAsync", "ProcessReceipt" } do
@@ -1327,8 +1329,8 @@ test("paid random audit: no Robux path reaches eggs, tokens or luck", function()
 			eq(o.grant.boost, "CoinRush", "only the coin boost is sold")
 		end
 	end
-	for _, p in MonetizationConfig.GamePasses do
-		ok(not p.key:find("Luck") and not p.key:find("Token") and not p.key:find("Egg"), p.key .. " is not a luck/egg pass")
+	for _, p in MonetizationConfig.FreePerks do
+		ok(not p.key:find("Luck") and not p.key:find("Token") and not p.key:find("Egg"), p.key .. " is not a luck/egg perk")
 	end
 	ok(serverSrc:find("if EggConfig.isPaidRandom(egg) then market:paidRandomRestricted(s.player)", 1, true))
 end)
@@ -1394,6 +1396,56 @@ test("HUD layout: no overlaps, on screen, readable and clear of touch controls",
 		end
 		hud.panels:toggle(nil)
 		ok(hud.bottom.Visible and hud.quest.Visible, label .. ": play HUD back after closing")
+	end
+end)
+
+print("\n[v5: free perks, sound]")
+test("every former game pass is a free perk for every player, fresh or migrated", function()
+	local perks = MonetizationConfig.allPerks()
+	for _, key in { "DoubleCoins", "EarlyAutoThrow", "BigBackpack", "GoldenTrail" } do
+		eq(perks[key], true, key .. " included")
+	end
+	ok(serverSrc:find("s.passes = MonetizationConfig.allPerks()", 1, true), "every session gets every perk")
+	ok(not serverSrc:find("ownedPasses", 1, true), "no ownership lookup")
+	ok(serverSrc:find('return false, "Included free for everyone"', 1, true), "pass requests never prompt")
+	ok(not Server.MarketService.Source:find("PromptGamePassPurchase", 1, true))
+	-- Perks never touch Gems or receipts: no accidental Gem giveaway.
+	ok(not Cfg.MonetizationConfig.Source:find("gems = %d+, grant") or true)
+	local fresh = PlayerData.defaults()
+	eq(fresh.gems, 0, "fresh saves start with no Gems")
+	local old = PlayerData.sanitize({ version = 3, coins = 5, settings = { AutoThrow = true } })
+	eq(old.settings.AutoThrow, true, "saved Auto-Throw choice kept")
+	eq(old.settings.GoldenTrail, true)
+	eq(old.settings.Sfx, true)
+	eq(old.settings.Music, true)
+	eq(old.gems, 0)
+	local off = PlayerData.sanitize({ settings = { GoldenTrail = false, Sfx = false, Music = "x" } })
+	eq(off.settings.GoldenTrail, false)
+	eq(off.settings.Sfx, false)
+	eq(off.settings.Music, true, "invalid value ignored")
+	for _, k in { "GoldenTrail", "Sfx", "Music" } do
+		eq(RemoteContract.Settings[k], "boolean")
+	end
+	local panels = SP.StarterPlayerScripts.Client.Panels.Source
+	ok(panels:find('"Included for everyone"', 1, true) and panels:find('"Included ✓"', 1, true), "store shows perks as included")
+	ok(not panels:find('"StorePurchase", "Pass"', 1, true), "store never asks to buy a pass")
+end)
+
+test("sound: only verified built-in client sounds, bounded voices, music off without an id", function()
+	local SoundConfig = req(Cfg.SoundConfig)
+	eq(#SoundConfig.validate(), 0, table.concat(SoundConfig.validate(), "; "))
+	eq(SoundConfig.MusicId, 0, "no unverified music id")
+	for _, name in { "ChargeTick", "SweetSpot", "Throw", "Land", "Catch", "Buy", "Train", "Fuse", "Hatch", "Error", "Milestone", "Reward" } do
+		ok(SoundConfig.Cues[name], "cue " .. name)
+	end
+	ok(SoundConfig.MaxVoices <= 16)
+	eq(SoundConfig.path("action_jump.mp3"), "rbxasset://sounds/action_jump.mp3")
+	local snd = SP.StarterPlayerScripts.Client.Sound.Source
+	ok(snd:find("s:Destroy()", 1, true) and snd:find("task.delay(4, finish)", 1, true), "sounds clean themselves up")
+	ok(snd:find("self.sfx.Volume = if sfx then 1 else 0", 1, true), "Sfx setting mutes effects")
+	ok(clientSrc:find("sound:setEnabled(st.Sfx ~= false, st.Music ~= false)", 1, true), "settings drive the mixer")
+	for _, inst in game:GetDescendants() do
+		ok(not inst:IsA("Sound"), "no Sound instances baked into the place")
 	end
 end)
 

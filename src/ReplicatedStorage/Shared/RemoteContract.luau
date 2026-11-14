@@ -56,6 +56,9 @@ RemoteContract.Settings = {
 	ShowCutscenes = "boolean",
 	ShowGuide = "boolean",
 	ReduceMotion = "boolean",
+	GoldenTrail = "boolean",
+	Sfx = "boolean",
+	Music = "boolean",
 }
 
 return RemoteContract

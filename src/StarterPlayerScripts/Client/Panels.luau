@@ -1,6 +1,6 @@
 --!strict
 -- Modal panels: Snacks (earned upgrades), Eggs (earn-only Paw Tokens, odds shown), Pets,
--- Pet Index, Store (Robux passes, Gem packs and fixed Gem offers), Settings and Help.
+-- Pet Index, Store (free perks, Gem packs and fixed Gem offers), Settings and Help.
 -- Only one is open at a time.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -424,6 +424,15 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	settingRow(6, "ShowGuide", "Quest guide", "A marker that points to your current quest.", function()
 		run("ToggleSetting", "ShowGuide", current("ShowGuide") == false)
 	end)
+	settingRow(7, "Sfx", "Sound effects", "Throws, catches, rewards and buttons.", function()
+		run("ToggleSetting", "Sfx", current("Sfx") == false)
+	end)
+	settingRow(8, "Music", "Music", "Plays only when a music track is set up.", function()
+		run("ToggleSetting", "Music", current("Music") == false)
+	end)
+	settingRow(9, "GoldenTrail", "Golden Trail", "A gold trail behind every snack. Free for everyone.", function()
+		run("ToggleSetting", "GoldenTrail", current("GoldenTrail") == false)
+	end)
 	add("Settings", settings)
 
 	------------------------------------------------ help
@@ -478,6 +487,10 @@ function Panels:toggle(name: string?)
 		end
 	end
 	self.open = name
+	local hudSound: any = self.hud and self.hud.sound
+	if hudSound then
+		hudSound:play("Click")
+	end
 	if self.hud and self.hud.onPanel then
 		self.hud:onPanel(name)
 	end
@@ -613,6 +626,9 @@ function Panels:refresh(state: any, full: boolean?)
 	onOff("ShowCutscenes", s.ShowCutscenes ~= false)
 	onOff("KeepMutated", s.KeepMutated ~= false)
 	onOff("ShowGuide", s.ShowGuide ~= false)
+	onOff("Sfx", s.Sfx ~= false)
+	onOff("Music", s.Music ~= false)
+	onOff("GoldenTrail", s.GoldenTrail ~= false)
 	UI.setButton(self.settingButtons.AutoSkipRarity, s.AutoSkipRarity or "Off", "secondary")
 	UI.setButton(self.autoSellButton, "Auto-sell: " .. (s.AutoSellRarity or "Off"))
 
@@ -932,12 +948,10 @@ function Panels:refreshStore(state: any)
 		end
 	end
 
-	sectionTitle(list, "Passes", nextOrder())
-	for _, listing in catalog.passes or {} do
-		local text, style = priceText(listing, passes[listing.key])
-		item(listing.name, listing.description, listing.icon or "★", text, style, function()
-			self.run("StorePurchase", "Pass", listing.key)
-		end)
+	-- Every former game pass is built in and free: shown as included, never sold.
+	sectionTitle(list, "Included for everyone", nextOrder())
+	for _, perk in MonetizationConfig.FreePerks do
+		item(perk.name, perk.description, perk.icon, if passes[perk.key] ~= false then "Included ✓" else "Loading…", "ghost", nil)
 	end
 
 	sectionTitle(list, "Gems", nextOrder())

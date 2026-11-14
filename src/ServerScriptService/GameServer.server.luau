@@ -100,7 +100,7 @@ type Session = {
 	dirtyStats: boolean,
 	saving: boolean,
 	connections: { RBXScriptConnection },
-	passes: { [string]: boolean }, -- verified server-side each session, never saved
+	passes: { [string]: boolean }, -- built-in free perks (every player), never saved
 	receiptBusy: number,
 	pendingReceipts: { [string]: boolean },
 	paidRandomRestricted: boolean,
@@ -303,7 +303,7 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 	local unlockedAuto = false
 	if not d.autoThrowUnlocked and d.bestDistance >= GameConfig.AutoThrowUnlockDistance then
 		d.autoThrowUnlocked = true
-		unlockedAuto = not s.passes.EarlyAutoThrow
+		unlockedAuto = false -- Auto-Throw is a free perk from the start; the distance milestone stays for old saves
 	end
 
 	local rec = Inventory.newPet(d, result.species, result.material, result.size)
@@ -368,7 +368,7 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 		zoneReward = zoneReward,
 		zoneName = BiomeConfig.zoneName(result.zone),
 		tokens = tokens,
-		goldenTrail = s.passes.GoldenTrail == true,
+		goldenTrail = s.passes.GoldenTrail == true and s.data.settings.GoldenTrail ~= false,
 	})
 end
 
@@ -657,11 +657,8 @@ StorePurchase.OnServerInvoke = guard("StorePurchase", function(s, kind: any, key
 		return false, "Invalid request"
 	end
 	if kind == "Pass" then
-		local pass = MonetizationConfig.getPass(key)
-		if pass and s.passes[pass.key] then
-			return false, "You already own this"
-		end
-		return market:promptPass(s.player, key)
+		-- Former game passes are free perks for everyone: never prompt, never charge.
+		return false, "Included free for everyone"
 	elseif kind == "Product" then
 		if not s.canSave then
 			return false, "Purchases need saving to work. Try again later"
@@ -759,9 +756,9 @@ local function onPlayerAdded(player: Player)
 		leaving = false,
 		released = false,
 	}
-	-- Pass ownership and policy are read server-side before the first sync; failures
-	-- fail closed (not owned / restricted).
-	s.passes = market:ownedPasses(player)
+	-- Every former game pass is a built-in free perk. The paid-random policy is read
+	-- server-side before the first sync and fails closed (restricted).
+	s.passes = MonetizationConfig.allPerks()
 	s.paidRandomRestricted = market:paidRandomRestricted(player)
 	if not player.Parent then
 		return
@@ -853,21 +850,6 @@ MarketplaceService.ProcessReceipt = function(info)
 	end
 	return Enum.ProductPurchaseDecision.NotProcessedYet
 end
-
--- Pass purchases made in this server: re-verify ownership server-side before applying.
-MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(player, passId, wasPurchased)
-	local s = sessions[player]
-	local pass = MonetizationConfig.passById(passId)
-	if not (s and pass and wasPurchased) then
-		return
-	end
-	if market:ownsPass(player, pass) then
-		s.passes[pass.key] = true
-		refreshPlot(s)
-		markFull(s)
-		notifyReward(s, "Pass unlocked", pass.name, 0, "Green", 0, true)
-	end
-end)
 
 Players.PlayerAdded:Connect(onPlayerAdded)
 Players.PlayerRemoving:Connect(onPlayerRemoving)

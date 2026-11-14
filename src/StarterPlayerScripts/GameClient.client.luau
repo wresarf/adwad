@@ -26,6 +26,7 @@ local ClientModules = script.Parent:WaitForChild("Client")
 local Hud = require(ClientModules:WaitForChild("Hud"))
 local Effects = require(ClientModules:WaitForChild("Effects"))
 local UI = require(ClientModules:WaitForChild("UI"))
+local Sound = require(ClientModules:WaitForChild("Sound"))
 
 local ThrowFood = Remotes:WaitForChild("ThrowFood") :: RemoteEvent
 local TrainStrength = Remotes:WaitForChild("TrainStrength") :: RemoteEvent
@@ -49,7 +50,7 @@ local state: { [string]: any } = {
 	ownedFoods = { [FoodConfig.DefaultFood] = true },
 	pets = {},
 	discovered = {},
-	settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, ReduceMotion = false, AutoSellRarity = "Off" },
+	settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, ReduceMotion = false, AutoSellRarity = "Off", GoldenTrail = true, Sfx = true, Music = true },
 	autoThrowUnlocked = false,
 	quest = nil,
 	questsDone = 0,
@@ -140,6 +141,9 @@ end
 
 local hud: any
 local fx: any
+local sound: Sound.Player
+local lastTick = -1 -- charge meter tenth last ticked
+local wasSweet = false
 local charging = false
 local chargeStart = 0
 local lastRelease = 0
@@ -206,6 +210,7 @@ local function throwUp()
 	lastRelease = os.clock()
 	local charge = GameMath.chargeAt(lastRelease - chargeStart)
 	ThrowFood:FireServer("Release")
+	sound:play("Throw", nil, if GameMath.isSweetSpot(charge) then 1.1 else 1)
 	fx:setCharging(nil)
 	fx:punch(if GameMath.isSweetSpot(charge) then 1.2 else 0.5)
 end
@@ -217,6 +222,7 @@ local function train()
 	end
 	lastTrain = now
 	TrainStrength:FireServer()
+	sound:play("Train", nil, 0.95 + math.random() * 0.1)
 	-- Optimistic feedback only; the server's StateSync is authoritative.
 	local boosted = inGym()
 	local gain = GameMath.trainGain(state.strength or 0) * (if boosted then GameConfig.GymMultiplier else 1)
@@ -265,6 +271,9 @@ hud = Hud.new(playerGui, {
 	onSkip = skip,
 })
 fx = Effects.new(hud, getState)
+sound = Sound.new()
+hud.sound = sound
+fx.sound = sound
 fx:startAmbient()
 hud:update(state)
 hud:toast("Loading your save", UI.Colors.Teal)
@@ -416,6 +425,22 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
 	if trainHeld and now - lastTrain >= GameConfig.TrainRepeat then
 		train()
 	end
+	-- Charge feedback: a rising tick every tenth of the meter, a chime entering Sweet.
+	if charge then
+		local tenth = math.floor(charge * 10)
+		if tenth ~= lastTick then
+			lastTick = tenth
+			sound:play("ChargeTick", nil, 0.8 + charge * 0.8)
+		end
+		local sweet = GameMath.isSweetSpot(charge)
+		if sweet and not wasSweet then
+			sound:play("SweetSpot")
+		end
+		wasSweet = sweet
+	else
+		lastTick = -1
+		wasSweet = false
+	end
 	fx:setCharging(charge, state.equippedFood)
 	hud:tick(charge, if charge then previewText(charge) else nil)
 	updateGuide()
@@ -442,6 +467,8 @@ table.insert(connections, StateSync.OnClientEvent:Connect(function(incoming: any
 		end
 	end
 	hud:update(state)
+	local st = state.settings or {}
+	sound:setEnabled(st.Sfx ~= false, st.Music ~= false)
 	fx:setBestDistance(state.bestDistance or 0)
 end))
 
@@ -492,6 +519,7 @@ table.insert(connections, WeatherEvent.OnClientEvent:Connect(function(w: any)
 	if w.active and not wasActive then
 		local def = GameConfig.getWeather(w.id)
 		hud:toast(string.format("%s · %s", w.name or "Weather", w.description or ""), if def then def.color else UI.Colors.Plum)
+		sound:play("Weather")
 	elseif not w.active and wasActive then
 		hud:toast("Weather cleared · cravings changed", UI.Colors.Teal)
 	end
@@ -504,4 +532,5 @@ script.Destroying:Connect(function()
 	end
 	fx:destroy()
 	hud:destroy()
+	sound:destroy()
 end)

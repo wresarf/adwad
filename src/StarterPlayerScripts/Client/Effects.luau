@@ -29,6 +29,14 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local PetModelBuilder = require(Shared:WaitForChild("PetModelBuilder"))
 local GameMath = require(Shared:WaitForChild("GameMath"))
 
+-- Plays a sound cue if the client wired a Sound player in (absent in headless tools).
+local function sfx(owner: any, name: string, at: Vector3?, pitch: number?)
+	local player: any = owner.sound
+	if player then
+		player:play(name, at, pitch)
+	end
+end
+
 local Effects = {}
 Effects.__index = Effects
 Effects.BaseFov = 70
@@ -435,7 +443,8 @@ function Effects:_foodPart(parent: Instance, foodId: string?, withTrail: boolean
 		trail.LightInfluence = 0.6
 		trail.WidthScale = ns({ { 0, 1 }, { 1, 0.1 } })
 		local st = self.getState()
-		local golden = type(st.passes) == "table" and st.passes.GoldenTrail == true -- Golden Trail pass (cosmetic)
+		-- Golden Trail: a free cosmetic perk for everyone, switchable in Settings.
+		local golden = type(st.passes) == "table" and st.passes.GoldenTrail == true and (st.settings == nil or st.settings.GoldenTrail ~= false)
 		trail.Color = if golden
 			then ColorSequence.new(Color3.fromRGB(255, 214, 90), Palette.Amber)
 			else ColorSequence.new(food.color:Lerp(Palette.Ivory, 0.3), Palette.Ivory)
@@ -731,6 +740,13 @@ function Effects:_land(ground: Vector3, payload: any)
 	self:_dust(ground, 1, biome.groundColor)
 	self:_groundRing(ground, Palette.Ivory:Lerp(rarityColor(payload.rarity), math.min(0.15 + idx * 0.1, 0.7)), 1)
 	self:_landingMarker(ground, payload)
+	local snd = self.sound
+	if snd then
+		sfx(self, if payload.zone == "Swamp" then "Splash" else "Land", ground, nil)
+		task.delay(0.12, function()
+			sfx(self, "Catch", nil, nil)
+		end)
+	end
 	task.delay(0.08, function()
 		if self.alive then
 			self:_spawnCaughtPet(payload, ground, nil)
@@ -1499,12 +1515,28 @@ end
 
 ------------------------------------------------------------------ ambient
 
+-- Plot pets come alive: idle bob and sway, random blinks, and when you walk up they
+-- turn to face you and do a happy hop. Only pets near the camera animate (24 Hz), and
+-- reduced motion keeps blinks but calms the bob and drops the hops.
+type PetLife = { base: CFrame, eyes: { { part: BasePart, size: Vector3 } }, nextBlink: number, blinkUntil: number, yaw: number, nextHop: number, hopStart: number }
+
+local FACE_KEEP = { Eye = true, EyeShine = true, Nose = true, Cheek = true, Whisker = true, Teeth = true, Tooth = true, Nostril = true }
+
 function Effects:startAmbient()
-	local bases: { [Model]: CFrame } = {}
+	local pets: { [Model]: PetLife } = {}
+	local rng = Random.new()
 	local function track(inst: Instance)
-		if inst:IsA("Model") then
-			bases[inst] = inst:GetPivot()
+		if not inst:IsA("Model") then
+			return
 		end
+		local eyes = {}
+		for _, d in inst:GetDescendants() do
+			if d:IsA("BasePart") and (d.Name == "Eye" or d.Name == "EyeShine") then
+				table.insert(eyes, { part = d, size = d.Size })
+			end
+		end
+		local now = os.clock()
+		pets[inst] = { base = inst:GetPivot(), eyes = eyes, nextBlink = now + rng:NextNumber(1, 4), blinkUntil = 0, yaw = 0, nextHop = 0, hopStart = -10 }
 	end
 	for _, m in CollectionService:GetTagged("PlotPet") do
 		track(m)
@@ -1513,7 +1545,7 @@ function Effects:startAmbient()
 		task.defer(track, inst) -- wait for parts to replicate
 	end))
 	table.insert(self.connections, CollectionService:GetInstanceRemovedSignal("PlotPet"):Connect(function(inst)
-		bases[inst :: Model] = nil
+		pets[inst :: Model] = nil
 	end))
 	local acc = 0
 	table.insert(self.connections, RunService.Heartbeat:Connect(function(dt)
@@ -1521,25 +1553,60 @@ function Effects:startAmbient()
 		if acc < 1 / 24 then
 			return
 		end
+		local step = acc
 		acc = 0
 		local now = os.clock()
 		local camera = Workspace.CurrentCamera
 		local camPos = if camera then camera.CFrame.Position else Vector3.zero
-		local calm = if self:_reduced() then 0.35 else 1
-		for model, base in bases do
+		local root = rootPart()
+		local reduced = self:_reduced()
+		local calm = if reduced then 0.35 else 1
+		for model, life in pets do
 			if not model.Parent then
-				bases[model] = nil
-			elseif (base.Position - camPos).Magnitude < 180 then
-				local phase = (base.Position.X + base.Position.Z) * 0.1
-				model:PivotTo(base * CFrame.new(0, (math.sin(now * 2 + phase) * 0.35 + 0.35) * calm, 0) * CFrame.Angles(0, math.sin(now * 0.8 + phase) * 0.25 * calm, 0))
+				pets[model] = nil
+			else
+				local base = life.base
+				if (base.Position - camPos).Magnitude < 180 then
+					local phase = (base.Position.X + base.Position.Z) * 0.1
+					-- Turn toward a nearby player, otherwise drift back to facing forward.
+					local targetYaw = 0
+					if root then
+						local off = base:PointToObjectSpace(root.Position)
+						local flat = Vector3.new(off.X, 0, off.Z)
+						if flat.Magnitude < 18 and flat.Magnitude > 0.5 then
+							targetYaw = math.atan2(-off.X, -off.Z)
+							if not reduced and now > life.nextHop then
+								life.nextHop = now + rng:NextNumber(2.5, 4.5)
+								life.hopStart = now
+							end
+						end
+					end
+					life.yaw += (targetYaw - life.yaw) * math.min(1, step * 4)
+					local hopT = (now - life.hopStart) / 0.45
+					local hop = if hopT >= 0 and hopT <= 1 then math.sin(hopT * math.pi) * 1.4 else 0
+					local bob = (math.sin(now * 2 + phase) * 0.35 + 0.35) * calm
+					local sway = if math.abs(targetYaw) > 0 then 0 else math.sin(now * 0.8 + phase) * 0.25 * calm
+					model:PivotTo(base * CFrame.new(0, bob + hop, 0) * CFrame.Angles(0, life.yaw + sway, 0))
+					-- Blink: eyes squash for a moment every few seconds.
+					if now >= life.nextBlink then
+						life.blinkUntil = now + 0.12
+						life.nextBlink = now + rng:NextNumber(2.2, 5.5)
+					end
+					local closed = now < life.blinkUntil
+					for _, e in life.eyes do
+						if e.part.Parent then
+							e.part.Size = if closed then Vector3.new(e.size.X, e.size.Y * 0.15, e.size.Z) else e.size
+						end
+					end
+				end
 			end
 		end
 		self:_updateAmbience(camPos)
-		-- Rainbow material drifts slowly through a softened spectrum.
+		-- Rainbow material drifts slowly through a softened spectrum (faces stay put).
 		local hue = (now * 0.12) % 1
 		for _, m in CollectionService:GetTagged("RainbowPet") do
 			for _, p in m:GetDescendants() do
-				if p:IsA("BasePart") and p.Name ~= "Eye" and p.Name ~= "Shine" and p.Name ~= "Nose" and p.Name ~= "Cheek" then
+				if p:IsA("BasePart") and not FACE_KEEP[p.Name] then
 					p.Color = Color3.fromHSV((hue + p.Position.Y * 0.03) % 1, 0.55, 0.95)
 				end
 			end

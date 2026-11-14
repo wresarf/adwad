@@ -1,5 +1,5 @@
 --!strict
--- Every Robux offer in one place. IDs are 0 until the game is published and real passes /
+-- Every Robux offer in one place (Gem developer products only; former passes are free perks). IDs are 0 until the game is published and real passes /
 -- developer products are created on the Creator Dashboard. An offer with id 0 is shown as
 -- "Not available yet" and the server refuses to prompt it, so nothing here can be bought
 -- by accident. Robux prices are never hard-coded: the server reads them from
@@ -12,9 +12,10 @@
 --              items (a named pet with a named mutation, or a timed boost). Gems never buy
 --              eggs, tokens, coins, foods, luck or anything with a random outcome.
 
-export type GamePass = {
+-- Former game passes. Every perk is built in and free for every player: there is no
+-- Marketplace pass, no id, no price and no ownership check.
+export type Perk = {
 	key: string,
-	id: number,
 	name: string,
 	description: string,
 	icon: string,
@@ -46,12 +47,21 @@ export type GemOffer = {
 
 local MonetizationConfig = {}
 
-MonetizationConfig.GamePasses = {
-	{ key = "DoubleCoins", id = 0, name = "Double Coins", description = "Your plot earns 2x coins.", icon = "2x" },
-	{ key = "EarlyAutoThrow", id = 0, name = "Auto-Throw Pass", description = "Use Auto-Throw from the start.", icon = "A" },
-	{ key = "BigBackpack", id = 0, name = "Big Backpack", description = "Hold 150 more pets.", icon = "+" },
-	{ key = "GoldenTrail", id = 0, name = "Golden Trail", description = "A gold trail behind every snack. Looks only.", icon = "*" },
-} :: { GamePass }
+MonetizationConfig.FreePerks = {
+	{ key = "DoubleCoins", name = "Double Coins", description = "Your plot earns 2x coins.", icon = "2x" },
+	{ key = "EarlyAutoThrow", name = "Auto-Throw", description = "Use Auto-Throw from the start.", icon = "A" },
+	{ key = "BigBackpack", name = "Big Backpack", description = "Hold 150 more pets.", icon = "+" },
+	{ key = "GoldenTrail", name = "Golden Trail", description = "A gold trail behind every snack. Turn it off in Settings.", icon = "*" },
+} :: { Perk }
+
+-- The perk set every session gets (a fresh table each time, never saved).
+function MonetizationConfig.allPerks(): { [string]: boolean }
+	local t = {}
+	for _, p in MonetizationConfig.FreePerks do
+		t[p.key] = true
+	end
+	return t
+end
 
 MonetizationConfig.Products = {
 	{ key = "GemsSmall", id = 0, name = "Pouch of Gems", gems = 100 },
@@ -107,26 +117,6 @@ end
 
 -- Lookups read the lists live (they are tiny), so an id filled in later is picked up and
 -- an unset id (0) can never match a real purchase.
-function MonetizationConfig.getPass(key: any): GamePass?
-	for _, p in MonetizationConfig.GamePasses do
-		if p.key == key then
-			return p
-		end
-	end
-	return nil
-end
-
-function MonetizationConfig.passById(id: any): GamePass?
-	if not MonetizationConfig.isConfigured(id) then
-		return nil
-	end
-	for _, p in MonetizationConfig.GamePasses do
-		if p.id == id then
-			return p
-		end
-	end
-	return nil
-end
 
 function MonetizationConfig.getProduct(key: any): Product?
 	for _, p in MonetizationConfig.Products do
