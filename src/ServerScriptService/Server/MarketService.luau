@@ -7,7 +7,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local MonetizationConfig = require(ReplicatedStorage:WaitForChild("Config"):WaitForChild("MonetizationConfig"))
 
-export type Status = string -- "unset" | "ok" | "offsale" | "error"
+export type Status = string -- "unset" | "loading" | "ok" | "offsale" | "error"
 export type Listing = {
 	key: string,
 	name: string,
@@ -72,23 +72,45 @@ function MarketService.refreshPrices(self: Market)
 	end
 end
 
-local function priceOf(self: Market, slot: string): (Status, number?)
-	local entry = self.prices[slot]
-	if not entry then
+-- Configured offers whose price hasn't been fetched yet report "loading", so the store
+-- can say "Checking price..." instead of wrongly showing them as unavailable.
+local function priceOf(self: Market, slot: string, id: number): (Status, number?)
+	if not MonetizationConfig.isConfigured(id) then
 		return "unset", nil
 	end
+	local entry = self.prices[slot]
+	if not entry or entry.status == "unset" then
+		return "loading", nil
+	end
 	return entry.status, entry.price
+end
+
+-- True when any configured offer still needs a (re)fetch: never fetched or errored.
+function MarketService.needsRefresh(self: Market): boolean
+	for _, p in MonetizationConfig.GamePasses do
+		local status = priceOf(self, "pass:" .. p.key, p.id)
+		if status == "loading" or status == "error" then
+			return true
+		end
+	end
+	for _, p in MonetizationConfig.Products do
+		local status = priceOf(self, "product:" .. p.key, p.id)
+		if status == "loading" or status == "error" then
+			return true
+		end
+	end
+	return false
 end
 
 -- Store listing sent to clients (no ids: the client never prompts by itself).
 function MarketService.catalog(self: Market): { passes: { Listing }, products: { Listing } }
 	local passes, products = {}, {}
 	for _, p in MonetizationConfig.GamePasses do
-		local status, price = priceOf(self, "pass:" .. p.key)
+		local status, price = priceOf(self, "pass:" .. p.key, p.id)
 		table.insert(passes, { key = p.key, name = p.name, description = p.description, icon = p.icon, status = status, price = price })
 	end
 	for _, p in MonetizationConfig.Products do
-		local status, price = priceOf(self, "product:" .. p.key)
+		local status, price = priceOf(self, "product:" .. p.key, p.id)
 		table.insert(products, { key = p.key, name = p.name, description = string.format("%d Gems", p.gems), gems = p.gems, status = status, price = price })
 	end
 	return { passes = passes, products = products }
@@ -119,7 +141,7 @@ local function promptable(self: Market, slot: string, id: number): (boolean, str
 	if not MonetizationConfig.isConfigured(id) then
 		return false, "Not available yet"
 	end
-	local status = priceOf(self, slot)
+	local status = priceOf(self, slot, id)
 	if status == "offsale" then
 		return false, "Not on sale right now"
 	end

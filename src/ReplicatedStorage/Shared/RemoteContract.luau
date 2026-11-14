@@ -14,6 +14,10 @@
 --                  Pass/Product only ask the server to show the Roblox prompt; grants happen
 --                  server-side (ownership check / ProcessReceipt). Offer spends Gems.
 --   HatchEgg       RemoteFunction (eggId: string) -> (ok, message)
+--   ManagePet      RemoteFunction (action: "Equip" | "Unequip" | "Lock" | "Unlock" | "Sell",
+--                                  fuseKey: string) -> (ok, message)
+--                  Acts on one group of identical pets (species|material|size).
+--   BuyUpgrade     RemoteFunction (upgradeId: string) -> (ok, message)   coins only
 -- Server -> Client
 --   StateSync      RemoteEvent    (state: table)   full player snapshot
 --   CatchEffect    RemoteEvent    (catch: table)   result of a throw (thrower only)
@@ -33,6 +37,8 @@ RemoteContract.Remotes = {
 	{ name = "ToggleSetting", class = "RemoteFunction", direction = "ClientToServer" },
 	{ name = "StorePurchase", class = "RemoteFunction", direction = "ClientToServer" },
 	{ name = "HatchEgg", class = "RemoteFunction", direction = "ClientToServer" },
+	{ name = "ManagePet", class = "RemoteFunction", direction = "ClientToServer" },
+	{ name = "BuyUpgrade", class = "RemoteFunction", direction = "ClientToServer" },
 	{ name = "StateSync", class = "RemoteEvent", direction = "ServerToClient" },
 	{ name = "CatchEffect", class = "RemoteEvent", direction = "ServerToClient" },
 	{ name = "WeatherEvent", class = "RemoteEvent", direction = "ServerToClient" },
@@ -40,6 +46,7 @@ RemoteContract.Remotes = {
 
 RemoteContract.ThrowActions = { Begin = true, Release = true }
 RemoteContract.StoreKinds = { Pass = true, Product = true, Offer = true }
+RemoteContract.PetActions = { Equip = true, Unequip = true, Lock = true, Unlock = true, Sell = true }
 
 -- Settings a client may change through ToggleSetting, with their value validator.
 RemoteContract.Settings = {

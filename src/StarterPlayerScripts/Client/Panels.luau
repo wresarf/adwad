@@ -13,6 +13,7 @@ local PetConfig = require(Config:WaitForChild("PetConfig"))
 local MutationConfig = require(Config:WaitForChild("MutationConfig"))
 local EggConfig = require(Config:WaitForChild("EggConfig"))
 local MonetizationConfig = require(Config:WaitForChild("MonetizationConfig"))
+local UpgradeConfig = require(Config:WaitForChild("UpgradeConfig"))
 local GameMath = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameMath"))
 local Progression = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Progression"))
 
@@ -51,8 +52,13 @@ end
 
 type Shell = { frame: Frame, body: ScrollingFrame, toolbar: Frame, subtitle: TextLabel, balance: TextLabel }
 
-local function shell(root: Instance, title: string, subtitle: string, onClose: () -> ()): Shell
-	local frame = UI.surface(root, UDim2.fromOffset(780, 540), UDim2.new(0.5, -390, 0.5, -262), C.Ivory, UI.Radius.l)
+local PANEL_W, PANEL_H = 780, 540
+local PETS_W = 920 -- the Pets panel is wider to fit the selected-pet sheet
+local SHEET_W = 260
+
+local function shell(root: Instance, title: string, subtitle: string, onClose: () -> (), width: number?): Shell
+	local w = width or PANEL_W
+	local frame = UI.surface(root, UDim2.fromOffset(w, PANEL_H), UDim2.new(0.5, -w / 2, 0.5, -PANEL_H / 2 + 8), C.Ivory, UI.Radius.l)
 	frame.Visible = false
 	frame.Active = true -- taps on the panel must not reach the Throw / Train buttons below
 	frame.ZIndex = 10
@@ -139,10 +145,25 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	------------------------------------------------ snacks (earned upgrades)
 	local shop = shell(root, "Snack Shop", "Better snacks fly further and add a little luck.", close)
 	UI.list(shop.body, 8)
-	UI.text(shop.toolbar, "Match a biome's craving to grow your combo. Bought snacks are yours to keep.", UDim2.fromScale(1, 1), nil, { size = T.Small, color = C.Muted, font = UI.FontMedium })
+	-- Two tabs over one list: snacks and permanent coin upgrades.
+	self.shopTab = "Snacks"
+	self.shopTabs = {}
+	self.upgradeRowsList = {}
+	local function shopTab(name: string, x: number)
+		local b = UI.button(shop.toolbar, name, "secondary", UDim2.fromOffset(140, 44), UDim2.fromOffset(x, 0), T.Body)
+		b.Activated:Connect(function()
+			self:setShopTab(name)
+		end)
+		self.shopTabs[name] = b
+	end
+	shopTab("Snacks", 0)
+	shopTab("Upgrades", 148)
+	self.shopHint = UI.text(shop.toolbar, "", UDim2.new(1, -310, 1, 0), UDim2.fromOffset(306, 0), { size = T.Small, color = C.Muted, font = UI.FontMedium })
 	self.shopRows = {}
+	self.snackRowsList = {}
 	for i, food in FoodConfig.Foods do
 		local r = row(shop.body, 84, i)
+		table.insert(self.snackRowsList, r)
 		local swatch = UI.new("Frame", { Size = UDim2.fromOffset(56, 56), Position = UDim2.fromOffset(14, 14), BackgroundColor3 = food.color, Parent = r })
 		UI.corner(swatch, if food.shape == "Block" then 12 else 28)
 		UI.text(swatch, FoodConfig.CravingIcons[food.craving] or "", UDim2.fromScale(1, 1), nil, { size = T.Title, align = Enum.TextXAlignment.Center })
@@ -156,6 +177,30 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		local bar, fill, barText = UI.progressBar(r, UDim2.fromOffset(200, 14), UDim2.new(1, -214, 0, 62), C.Amber)
 		barText.Visible = false
 		self.shopRows[food.id] = { button = buy, fill = fill, bar = bar, barText = barText, row = r }
+	end
+	self.upgradeRows = {}
+	for i, upgrade in UpgradeConfig.Upgrades do
+		local r = row(shop.body, 84, 100 + i)
+		r.Visible = false
+		table.insert(self.upgradeRowsList, r)
+		local badge = UI.new("TextLabel", { Size = UDim2.fromOffset(56, 56), Position = UDim2.fromOffset(14, 14), BackgroundColor3 = C.LeafSoft, Text = upgrade.icon, Font = UI.FontHeavy, TextSize = T.Title, TextColor3 = C.Charcoal, Parent = r })
+		UI.corner(badge, UI.Radius.m)
+		UI.text(r, upgrade.name, UDim2.new(1, -330, 0, 26), UDim2.fromOffset(84, 10), { size = T.Label, font = UI.FontHeavy })
+		local levelText = UI.text(r, "", UDim2.new(1, -330, 0, 20), UDim2.fromOffset(84, 36), { size = T.Small, color = C.Muted, font = UI.FontMedium })
+		UI.text(r, upgrade.effect .. " level", UDim2.new(1, -330, 0, 20), UDim2.fromOffset(84, 56), { size = T.Caption, color = C.Muted, font = UI.FontMedium })
+		local buy = UI.button(r, "", "primary", UDim2.fromOffset(200, 48), UDim2.new(1, -214, 0, 10))
+		buy.Activated:Connect(function()
+			run("BuyUpgrade", upgrade.id)
+		end)
+		local pips = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(200, 14), Position = UDim2.new(1, -214, 0, 62), Parent = r })
+		UI.list(pips, 6, true, Enum.HorizontalAlignment.Center)
+		local pipList = {}
+		for lvl = 1, UpgradeConfig.maxLevel(upgrade) do
+			local pip = UI.new("Frame", { Size = UDim2.fromOffset(28, 10), BackgroundColor3 = C.Sand, BorderSizePixel = 0, LayoutOrder = lvl, Parent = pips })
+			UI.corner(pip, 5)
+			pipList[lvl] = pip
+		end
+		self.upgradeRows[upgrade.id] = { button = buy, level = levelText, pips = pipList }
 	end
 	add("Shop", shop)
 
@@ -192,11 +237,15 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		local ownedLabels = {}
 		for j, entry in egg.entries do
 			local pet = PetConfig.get(entry.species)
-			local line = UI.new("Frame", { BackgroundColor3 = C.Ivory, Size = UDim2.new(1, 0, 0, 34), LayoutOrder = j, Parent = odds })
+			local line = UI.new("Frame", { BackgroundColor3 = C.Ivory, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = j, Parent = odds })
 			UI.corner(line, UI.Radius.s)
-			UI.text(line, if pet then pet.name else entry.species, UDim2.new(0.45, -12, 1, 0), UDim2.fromOffset(12, 0), { size = T.Small })
 			if pet then
-				rarityTag(line, pet.rarity, UDim2.new(0.45, 0, 0, 5))
+				-- A small 3D preview of exactly what can hatch.
+				UI.petViewport(line, { species = entry.species }, UDim2.fromOffset(40, 40), UDim2.fromOffset(4, 2))
+			end
+			UI.text(line, if pet then pet.name else entry.species, UDim2.new(0.45, -52, 1, 0), UDim2.fromOffset(50, 0), { size = T.Small })
+			if pet then
+				rarityTag(line, pet.rarity, UDim2.new(0.45, 0, 0, 10))
 				UI.text(line, "+" .. GameMath.formatNumber(pet.baseIncome) .. "/s", UDim2.new(0.18, 0, 1, 0), UDim2.new(0.62, 0, 0, 0), { size = T.Caption, color = C.Muted })
 			end
 			ownedLabels[entry.species] = UI.text(line, "", UDim2.new(0.12, 0, 1, 0), UDim2.new(0.74, 0, 0, 0), { size = T.Caption, color = C.LeafDark })
@@ -211,7 +260,8 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	add("Eggs", eggs)
 
 	------------------------------------------------ pets
-	local pets = shell(root, "Your Pets", "", close)
+	local pets = shell(root, "Your Pets", "", close, PETS_W)
+	pets.body.Size = UDim2.new(1, -(36 + SHEET_W + 12), 1, -152)
 	local function barButton(text: string, style: string, x: number, w: number, fn: () -> ()): TextButton
 		local b = UI.button(pets.toolbar, text, style, UDim2.fromOffset(w, 46), UDim2.fromOffset(x, 0), T.Small)
 		b.Activated:Connect(fn)
@@ -237,7 +287,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		end
 		run("AutoSell", current, true)
 	end)
-	self.sortButton = barButton("Sort: Income", "ghost", 576, 156, function()
+	self.sortButton = barButton("Sort: Income", "ghost", 576, 150, function()
 		self.sort = cycle(SORTS, self.sort)
 		if self.state then
 			self:refreshPets(self.state)
@@ -246,6 +296,69 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	UI.new("UIGridLayout", { CellSize = UDim2.fromOffset(170, 196), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pets.body })
 	self.petList = pets.body
 	self.petCountLabel = pets.subtitle
+	self.petCards = {}
+	self.selectedKey = nil
+	self.sellArmed = nil
+
+	-- Selected-pet sheet (right column): details and the actions for one group.
+	local sheet = UI.surface(pets.frame, UDim2.fromOffset(SHEET_W, PANEL_H - 158), UDim2.new(1, -(SHEET_W + 20), 0, 142), C.Paper, UI.Radius.m)
+	UI.padding(sheet, 12)
+	self.sheet = sheet
+	self.sheetEmpty = UI.text(sheet, "Select a pet to see its details, place it on your plot, lock or sell it.", UDim2.fromScale(1, 1), nil, { size = T.Body, color = C.Muted, font = UI.FontMedium, align = Enum.TextXAlignment.Center })
+	local sheetBody = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, Parent = sheet })
+	self.sheetBody = sheetBody
+	self.sheetView = UI.new("Frame", { BackgroundColor3 = C.Ivory, Size = UDim2.new(1, 0, 0, 110), Parent = sheetBody })
+	UI.corner(self.sheetView, UI.Radius.s)
+	self.sheetName = UI.text(sheetBody, "", UDim2.new(1, 0, 0, 26), UDim2.fromOffset(0, 116), { size = T.Label, font = UI.FontHeavy, wrap = false })
+	self.sheetTags = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), Position = UDim2.fromOffset(0, 144), Parent = sheetBody })
+	UI.list(self.sheetTags, 6, true)
+	self.sheetInfo = UI.text(sheetBody, "", UDim2.new(1, 0, 0, 40), UDim2.fromOffset(0, 172), { size = T.Small, color = C.Muted, font = UI.FontMedium, alignY = Enum.TextYAlignment.Top })
+	local function sheetButton(y: number, style: string, fn: () -> ()): TextButton
+		local b = UI.button(sheetBody, "", style, UDim2.new(1, 0, 0, 40), UDim2.fromOffset(0, y), T.Body)
+		b.Activated:Connect(fn)
+		return b
+	end
+	local function act(action: string)
+		local key = self.selectedKey
+		if key then
+			run("ManagePet", action, key)
+		end
+	end
+	self.sheetPlace = sheetButton(214, "primary", function()
+		local g = self.selectedGroup
+		if g then
+			act(if g.equipped > 0 and g.equipped == g.count then "Unequip" else "Equip")
+		end
+	end)
+	self.sheetFuse = sheetButton(260, "reward", function()
+		local g = self.selectedGroup
+		if g and g.count >= 3 and not g.locked and MutationConfig.nextMaterial(g.rec.material) then
+			self.run("FusePets", g.key)
+		end
+	end)
+	self.sheetLock = UI.button(sheetBody, "", "secondary", UDim2.new(0.5, -4, 0, 40), UDim2.fromOffset(0, 306), T.Small)
+	self.sheetLock.Activated:Connect(function()
+		local g = self.selectedGroup
+		if g then
+			act(if g.locked then "Unlock" else "Lock")
+		end
+	end)
+	-- Selling asks twice: the first tap arms it, the second within 3 s sells one copy.
+	self.sheetSell = UI.button(sheetBody, "", "secondary", UDim2.new(0.5, -4, 0, 40), UDim2.new(0.5, 4, 0, 306), T.Small)
+	self.sheetSell.Activated:Connect(function()
+		local g = self.selectedGroup
+		if not g or g.locked then
+			return
+		end
+		if self.sellArmed == g.key and os.clock() - (self.sellArmedAt or 0) < 3 then
+			self.sellArmed = nil
+			act("Sell")
+		else
+			self.sellArmed = g.key
+			self.sellArmedAt = os.clock()
+			self:renderSheet()
+		end
+	end)
 	add("Pets", pets)
 
 	------------------------------------------------ index
@@ -358,6 +471,24 @@ function Panels:isOpen(): boolean
 	return self.open ~= nil
 end
 
+function Panels:setShopTab(name: string)
+	self.shopTab = name
+	for key, b in self.shopTabs do
+		UI.setButton(b, nil, if key == name then "primary" else "secondary")
+	end
+	for _, r in self.snackRowsList do
+		r.Visible = name == "Snacks"
+	end
+	for _, r in self.upgradeRowsList do
+		r.Visible = name == "Upgrades"
+	end
+	self.shopHint.Text = if name == "Snacks"
+		then "Match a biome's craving to grow your combo. Snacks are yours to keep."
+		else "Permanent upgrades, paid with coins you earn."
+	local body = self.shells.Shop.body
+	body.CanvasPosition = Vector2.new()
+end
+
 function Panels:refresh(state: any, full: boolean?)
 	self.state = state
 	local coins = state.coins or 0
@@ -395,6 +526,30 @@ function Panels:refresh(state: any, full: boolean?)
 				end
 			end
 			r.bar.Visible = showBar
+		end
+	end
+	if not self.shopTab or self.shopHint.Text == "" then
+		self:setShopTab(self.shopTab or "Snacks")
+	end
+	local levels = state.upgrades or {}
+	for id, r in self.upgradeRows do
+		local upgrade = UpgradeConfig.get(id)
+		if upgrade then
+			local level = levels[id] or 0
+			local maxLevel = UpgradeConfig.maxLevel(upgrade)
+			r.level.Text = string.format("Level %d of %d", level, maxLevel)
+			for i, pip in r.pips do
+				pip.BackgroundColor3 = if i <= level then C.Leaf else C.Sand
+			end
+			local price = UpgradeConfig.nextPrice(upgrade, level)
+			if not price then
+				UI.setButton(r.button, "Maxed ✓", "ghost")
+			elseif coins >= price then
+				UI.setButton(r.button, "Buy · " .. GameMath.formatNumber(price), "primary")
+			else
+				UI.setButton(r.button, "Need " .. GameMath.formatNumber(price - coins) .. " more", "disabled")
+			end
+			r.button.Active = true
 		end
 	end
 
@@ -435,7 +590,7 @@ function Panels:refresh(state: any, full: boolean?)
 
 	-- Grids are the expensive parts: only rebuild on full syncs, and only while visible.
 	if full == false then
-		if self.open == "Store" and self.storeGems ~= state.gems then
+		if self.open == "Store" and (self.storeGems ~= state.gems or self.storePending ~= (state.receiptPending == true)) then
 			self:refreshStore(state)
 		end
 		return
@@ -479,6 +634,16 @@ function Panels:refreshPets(state: any)
 			equippedCount += 1
 		end
 	end
+	for _, g in order do
+		local all = true
+		for _, p in state.pets or {} do
+			if GameMath.fuseKey(p) == g.key and not p.locked then
+				all = false
+				break
+			end
+		end
+		g.locked = all
+	end
 	local sort = self.sort
 	table.sort(order, function(a, b)
 		if sort == "Rarity" and a.rarityIndex ~= b.rarityIndex then
@@ -493,6 +658,16 @@ function Panels:refreshPets(state: any)
 	end)
 	self.petCountLabel.Text = string.format("%d / %d in backpack · %d / %d on your plot", #(state.pets or {}), state.maxPets or GameConfig.MaxPets, equippedCount, state.slots or GameConfig.PlotPedestals)
 
+	self.petCards = {}
+	self.groups = groups
+	local selected: string? = self.selectedKey
+	if selected and not groups[selected] then
+		selected = nil
+		self.selectedKey = nil
+	end
+	self.selectedGroup = if selected then groups[selected] else nil
+	self:renderSheet()
+
 	if #order == 0 then
 		local empty = UI.text(self.petList, "No pets yet. Throw a snack at the Throw Line to meet your first one.", UDim2.fromOffset(520, 60), nil, { size = T.Body, color = C.Muted })
 		empty.LayoutOrder = 1
@@ -505,6 +680,7 @@ function Panels:refreshPets(state: any)
 		local rarity = GameMath.overallRarity(rec)
 		local card = UI.surface(self.petList, UDim2.new(), nil, C.Paper, UI.Radius.m)
 		card.LayoutOrder = i
+		self.petCards[g.key] = card
 		local mat = MutationConfig.getMaterial(rec.material)
 		local art = UI.new("Frame", { Size = UDim2.new(1, -16, 0, 76), Position = UDim2.fromOffset(8, 8), BackgroundColor3 = if mat and mat.color then C.Ivory:Lerp(mat.color, 0.25) else C.Ivory, Parent = card })
 		UI.corner(art, UI.Radius.s)
@@ -516,8 +692,16 @@ function Panels:refreshPets(state: any)
 		end
 		UI.tag(art, "x" .. g.count, C.Paper, C.Charcoal, UDim2.new(1, -4, 0, 4)).AnchorPoint = Vector2.new(1, 0)
 		if g.equipped > 0 then
-			UI.tag(art, "On plot", C.LeafSoft, C.LeafDark, UDim2.fromOffset(4, 4))
+			UI.tag(art, if g.equipped < g.count then string.format("%d on plot", g.equipped) else "On plot", C.LeafSoft, C.LeafDark, UDim2.fromOffset(4, 4))
 		end
+		if g.locked then
+			UI.tag(art, "🔒", C.Paper, C.Charcoal, UDim2.new(1, -4, 1, -4)).AnchorPoint = Vector2.new(1, 1)
+		end
+		-- Tapping the card selects it (the fuse button below keeps its own action).
+		local pick = UI.new("TextButton", { BackgroundTransparency = 1, Text = "", Size = UDim2.new(1, 0, 1, -44), ZIndex = 4, Parent = card })
+		pick.Activated:Connect(function()
+			self:select(g.key)
+		end)
 		local mut = {}
 		if rec.size ~= "Normal" then
 			table.insert(mut, rec.size)
@@ -531,8 +715,8 @@ function Panels:refreshPets(state: any)
 		UI.text(card, "+" .. GameMath.formatNumber(g.income) .. "/s", UDim2.new(0.5, -8, 0, 24), UDim2.new(0.5, 0, 0, 110), { size = T.Small, color = C.AmberDark, align = Enum.TextXAlignment.Right })
 		local nextMat = MutationConfig.nextMaterial(rec.material)
 		if nextMat then
-			local can = g.count >= 3
-			local fuse = UI.button(card, if can then "Fuse → " .. nextMat.id else string.format("%d / 3 to fuse", g.count), if can then "reward" else "disabled", UDim2.new(1, -16, 0, 34), UDim2.new(0, 8, 1, -40), T.Caption)
+			local can = g.count >= 3 and not g.locked
+			local fuse = UI.button(card, if g.locked then "Locked" elseif can then "Fuse → " .. nextMat.id else string.format("%d / 3 to fuse", g.count), if can then "reward" else "disabled", UDim2.new(1, -16, 0, 34), UDim2.new(0, 8, 1, -40), T.Caption)
 			fuse.Activated:Connect(function()
 				if can then
 					self.run("FusePets", g.key)
@@ -541,6 +725,88 @@ function Panels:refreshPets(state: any)
 		else
 			UI.text(card, "Top material", UDim2.new(1, -16, 0, 30), UDim2.new(0, 8, 1, -38), { size = T.Caption, color = C.Muted, align = Enum.TextXAlignment.Center })
 		end
+	end
+	self:highlightSelection()
+end
+
+function Panels:select(key: string?)
+	if self.selectedKey ~= key then
+		self.sellArmed = nil
+	end
+	self.selectedKey = key
+	self.selectedGroup = if key and self.groups then self.groups[key] else nil
+	self:highlightSelection()
+	self:renderSheet()
+end
+
+-- Selected card: thicker leaf-green edge plus the sheet on the right (not colour alone:
+-- the sheet names the pet).
+function Panels:highlightSelection()
+	for key, card in self.petCards do
+		local stroke = card:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			local selected = key == self.selectedKey
+			stroke.Color = if selected then C.Leaf else C.Line
+			stroke.Thickness = if selected then 3 else 1
+			stroke.Transparency = if selected then 0 else 0.2
+		end
+	end
+end
+
+function Panels:renderSheet()
+	local g: any = self.selectedGroup
+	self.sheetEmpty.Visible = g == nil
+	self.sheetBody.Visible = g ~= nil
+	if not g then
+		return
+	end
+	local rec: any = g.rec
+	local pet = PetConfig.get(rec.species)
+	if self.sheetViewKey ~= g.key then
+		self.sheetViewKey = g.key
+		for _, child in self.sheetView:GetChildren() do
+			if child:IsA("ViewportFrame") then
+				child:Destroy()
+			end
+		end
+		if pet then
+			UI.petViewport(self.sheetView, rec, UDim2.fromScale(1, 1), UDim2.new())
+		end
+	end
+	local mut = {}
+	if rec.size ~= "Normal" then
+		table.insert(mut, rec.size)
+	end
+	if rec.material ~= "Normal" then
+		table.insert(mut, rec.material)
+	end
+	self.sheetName.Text = (if #mut > 0 then table.concat(mut, " ") .. " " else "") .. (if pet then pet.name else rec.species)
+	clearList(self.sheetTags)
+	rarityTag(self.sheetTags, (GameMath.overallRarity(rec)), nil, 1)
+	UI.tag(self.sheetTags, "x" .. g.count, C.Ivory, C.Charcoal, nil, 2)
+	if g.locked then
+		UI.tag(self.sheetTags, "🔒 Locked", C.Ivory, C.Charcoal, nil, 3)
+	end
+	self.sheetInfo.Text = string.format("+%s/s each · %d on plot\nSells for %s", GameMath.formatNumber(g.income), g.equipped, GameMath.formatNumber(GameMath.sellValue(rec)))
+	local allOut = g.equipped > 0 and g.equipped == g.count
+	UI.setButton(self.sheetPlace, if allOut then "Back to backpack" else "Place on plot", if allOut then "secondary" else "primary")
+	local nextMat = MutationConfig.nextMaterial(rec.material)
+	if not nextMat then
+		UI.setButton(self.sheetFuse, "Top material", "disabled")
+	elseif g.locked then
+		UI.setButton(self.sheetFuse, "Unlock to fuse", "disabled")
+	elseif g.count >= 3 then
+		UI.setButton(self.sheetFuse, "Fuse 3 → " .. nextMat.id, "reward")
+	else
+		UI.setButton(self.sheetFuse, string.format("Fuse: %d / 3", g.count), "disabled")
+	end
+	UI.setButton(self.sheetLock, if g.locked then "Unlock" else "🔒 Lock", "secondary")
+	if g.locked then
+		UI.setButton(self.sheetSell, "Locked", "disabled")
+	elseif self.sellArmed == g.key then
+		UI.setButton(self.sheetSell, "Tap to confirm", "danger")
+	else
+		UI.setButton(self.sheetSell, "Sell 1", "secondary")
 	end
 end
 
@@ -589,23 +855,32 @@ end
 
 ------------------------------------------------------------------ store
 
-local function priceText(listing: any, owned: boolean?): (string, string)
+-- Button text + style for a Robux listing. States: owned, priced, loading, pending
+-- (a Gem purchase is being saved), off sale, error, unset.
+local function priceText(listing: any, owned: boolean?, pending: boolean?): (string, string)
 	if owned then
 		return "Owned ✓", "ghost"
 	end
 	if listing.status == "ok" and type(listing.price) == "number" then
+		if pending then
+			return "Finishing…", "disabled"
+		end
 		return "R$ " .. GameMath.formatNumber(listing.price), "reward"
+	elseif listing.status == "loading" then
+		return "Checking price…", "disabled"
 	elseif listing.status == "offsale" then
 		return "Not on sale", "disabled"
 	elseif listing.status == "error" then
-		return "Unavailable", "disabled"
+		return "Try again later", "disabled"
 	end
 	return "Not available yet", "disabled"
 end
+Panels._priceText = priceText -- exposed for the test-suite
 
 function Panels:refreshStore(state: any)
 	self.storeDirty = false
 	self.storeGems = state.gems
+	self.storePending = state.receiptPending == true
 	local list = self.storeList
 	clearList(list)
 	local catalog = state.store or { passes = {}, products = {} }
@@ -639,7 +914,7 @@ function Panels:refreshStore(state: any)
 
 	sectionTitle(list, "Gems", nextOrder())
 	for _, listing in catalog.products or {} do
-		local text, style = priceText(listing, false)
+		local text, style = priceText(listing, false, state.receiptPending == true)
 		item(listing.name, listing.description, "💎", text, style, function()
 			self.run("StorePurchase", "Product", listing.key)
 		end)
@@ -648,8 +923,9 @@ function Panels:refreshStore(state: any)
 	sectionTitle(list, "Spend Gems", nextOrder())
 	local gems = state.gems or 0
 	for _, offer in MonetizationConfig.GemOffers do
-		local can = gems >= offer.gems
-		item(offer.name, offer.description, if offer.grant.kind == "pet" then "🐾" else "⏱", string.format("%s 💎 %d", if can then "Buy ·" else "🔒", offer.gems), if can then "primary" else "disabled", function()
+		local can = gems >= offer.gems and state.receiptPending ~= true
+		local label = if can then string.format("Buy · 💎 %d", offer.gems) elseif gems < offer.gems then string.format("Need %d more 💎", offer.gems - gems) else "Finishing…"
+		item(offer.name, offer.description, if offer.grant.kind == "pet" then "🐾" else "⏱", label, if can then "primary" else "disabled", function()
 			self.run("StorePurchase", "Offer", offer.key)
 		end)
 	end

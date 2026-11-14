@@ -174,9 +174,11 @@ function Inventory.fuse(data: any, key: string): (boolean, any)
 	return true, rec
 end
 
--- Repeatedly fuses every eligible group (cascading Gold -> Diamond ...). Returns fusions made.
-function Inventory.fuseAll(data: any): number
+-- Repeatedly fuses every eligible group (cascading Gold -> Diamond ...). Returns the
+-- number of fusions made and the best pet that came out of them.
+function Inventory.fuseAll(data: any): (number, any)
 	local made = 0
+	local best: any = nil
 	for _ = 1, 500 do
 		local counts: { [string]: number } = {}
 		local target: string? = nil
@@ -193,13 +195,100 @@ function Inventory.fuseAll(data: any): number
 		if not target then
 			break
 		end
-		local ok = Inventory.fuse(data, target)
+		local ok, rec = Inventory.fuse(data, target)
 		if not ok then
 			break
 		end
 		made += 1
+		if best == nil or GameMath.petIncome(rec) >= GameMath.petIncome(best) then
+			best = rec
+		end
 	end
-	return made
+	-- `best` may have been consumed by a later cascade step; report what is still owned.
+	if best and not table.find(data.pets, best) then
+		best = nil
+		for _, p in data.pets do
+			if p.material ~= "Normal" and (best == nil or GameMath.petIncome(p) > GameMath.petIncome(best)) then
+				best = p
+			end
+		end
+	end
+	return made, best
+end
+
+------------------------------------------------------------------ single-group actions
+-- The Pets panel acts on one group of identical pets (the fusion key). Each action
+-- touches one copy (equip / unequip / sell) or the whole group (lock / unlock).
+
+function Inventory.group(data: any, key: string): { any }
+	local list = {}
+	for _, p in data.pets do
+		if GameMath.fuseKey(p) == key then
+			table.insert(list, p)
+		end
+	end
+	return list
+end
+
+function Inventory.equipOne(data: any, key: string, slots: number): (boolean, string)
+	local list = Inventory.group(data, key)
+	if #list == 0 then
+		return false, "You don't have that pet anymore"
+	end
+	if Inventory.equippedCount(data) >= slots then
+		return false, string.format("Your plot is full (%d / %d). Unequip a pet first", slots, slots)
+	end
+	for _, p in list do
+		if not p.equipped then
+			p.equipped = true
+			return true, "Placed on your plot"
+		end
+	end
+	return false, "All copies are already on your plot"
+end
+
+function Inventory.unequipOne(data: any, key: string): (boolean, string)
+	for _, p in Inventory.group(data, key) do
+		if p.equipped then
+			p.equipped = false
+			return true, "Moved to your backpack"
+		end
+	end
+	return false, "None of these are on your plot"
+end
+
+-- Locked pets are never sold (auto-sell, sell matching or Sell) and never fused.
+function Inventory.setLocked(data: any, key: string, locked: boolean): number
+	local n = 0
+	for _, p in Inventory.group(data, key) do
+		p.locked = locked
+		n += 1
+	end
+	return n
+end
+
+-- Sells one copy, preferring one that isn't on the plot. Returns (ok, coins | message).
+function Inventory.sellOne(data: any, key: string): (boolean, any)
+	local list = Inventory.group(data, key)
+	if #list == 0 then
+		return false, "You don't have that pet anymore"
+	end
+	local pick: any = nil
+	for _, p in list do
+		if not p.locked and (pick == nil or (pick.equipped and not p.equipped)) then
+			pick = p
+		end
+	end
+	if not pick then
+		return false, "Unlock it first to sell"
+	end
+	local idx = table.find(data.pets, pick)
+	if idx then
+		table.remove(data.pets, idx)
+	end
+	local value = GameMath.sellValue(pick)
+	data.coins += value
+	return true, value
 end
 
 return Inventory

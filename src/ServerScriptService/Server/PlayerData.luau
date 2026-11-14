@@ -11,6 +11,7 @@ local MutationConfig = require(Config:WaitForChild("MutationConfig"))
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local QuestConfig = require(Config:WaitForChild("QuestConfig"))
 local MonetizationConfig = require(Config:WaitForChild("MonetizationConfig"))
+local UpgradeConfig = require(Config:WaitForChild("UpgradeConfig"))
 
 export type Settings = {
 	AutoThrow: boolean,
@@ -57,6 +58,8 @@ export type Data = {
 	pawTokens: number, -- earn-only egg currency
 	receipts: { [string]: number }, -- PurchaseId -> os.time() granted (idempotency)
 	boosts: { [string]: number }, -- boost id -> os.time() it expires
+	-- v4
+	upgrades: { [string]: number }, -- coin upgrade id -> level bought
 }
 
 local PlayerData = {}
@@ -107,6 +110,7 @@ function PlayerData.defaults(): Data
 		pawTokens = 0,
 		receipts = {},
 		boosts = {},
+		upgrades = {},
 	}
 end
 
@@ -282,6 +286,16 @@ function PlayerData.sanitize(raw: any): Data
 			local v = raw.boosts[id]
 			if type(v) == "number" then
 				d.boosts[id] = math.floor(num(v, 0, 0, 1e11))
+			end
+		end
+	end
+
+	-- v4 fields (absent in v1-v3 saves, which start with no upgrades).
+	if type(raw.upgrades) == "table" then
+		for _, u in UpgradeConfig.Upgrades do
+			local lvl = math.floor(num(raw.upgrades[u.id], 0, 0, UpgradeConfig.maxLevel(u)))
+			if lvl > 0 then
+				d.upgrades[u.id] = lvl
 			end
 		end
 	end

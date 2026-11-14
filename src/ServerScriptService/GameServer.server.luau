@@ -19,6 +19,7 @@ local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
 local MonetizationConfig = require(Config:WaitForChild("MonetizationConfig"))
 local EggConfig = require(Config:WaitForChild("EggConfig"))
+local UpgradeConfig = require(Config:WaitForChild("UpgradeConfig"))
 local GameMath = require(Shared:WaitForChild("GameMath"))
 local Progression = require(Shared:WaitForChild("Progression"))
 local RemoteContract = require(Shared:WaitForChild("RemoteContract"))
@@ -33,6 +34,7 @@ local WeatherService = require(ServerModules:WaitForChild("WeatherService"))
 local RateLimiter = require(ServerModules:WaitForChild("RateLimiter"))
 local MarketService = require(ServerModules:WaitForChild("MarketService"))
 local Receipts = require(ServerModules:WaitForChild("Receipts"))
+local SaveGate = require(ServerModules:WaitForChild("SaveGate"))
 
 ------------------------------------------------------------------ remotes
 
@@ -54,6 +56,8 @@ local CatchEffect = remote("CatchEffect") :: RemoteEvent
 local WeatherEvent = remote("WeatherEvent") :: RemoteEvent
 local StorePurchase = remote("StorePurchase") :: RemoteFunction
 local HatchEgg = remote("HatchEgg") :: RemoteFunction
+local ManagePet = remote("ManagePet") :: RemoteFunction
+local BuyUpgrade = remote("BuyUpgrade") :: RemoteFunction
 
 ------------------------------------------------------------------ world
 
@@ -66,9 +70,6 @@ do
 	local problems = EggConfig.validate()
 	assert(#problems == 0, "EggConfig invalid: " .. table.concat(problems, "; "))
 end
-task.spawn(function()
-	market:refreshPrices()
-end)
 local function roll(): number
 	return rng:NextNumber()
 end
@@ -103,6 +104,10 @@ type Session = {
 	receiptBusy: number,
 	pendingReceipts: { [string]: boolean },
 	paidRandomRestricted: boolean,
+	-- Set when the player starts leaving: receipts are no longer accepted and, once the
+	-- releasing save has run, no other write may re-take the session lock.
+	leaving: boolean,
+	released: boolean,
 }
 
 local sessions: { [Player]: Session } = {}
@@ -182,6 +187,7 @@ local function buildState(s: Session, full: boolean): { [string]: any }
 		state.slots = GameConfig.PlotPedestals
 		state.stats = d.stats
 		state.zonesReached = d.zonesReached
+		state.upgrades = d.upgrades
 	end
 	return state
 end
@@ -218,20 +224,15 @@ local function sync(s: Session)
 	StateSync:FireClient(s.player, buildState(s, full))
 end
 
--- Saves now, waiting for an in-flight save first so a receipt is never reported as
--- saved by a write that started before it was recorded.
+-- Saves now (see Server/SaveGate): waits for an in-flight save so a receipt is never
+-- reported as saved by a write that started before it was recorded, and treats a
+-- releasing save as the session's last write.
 local function saveSession(s: Session, release: boolean?): boolean
-	if not s.canSave then
-		return false
-	end
-	local deadline = os.clock() + 30
-	while s.saving and os.clock() < deadline do
-		task.wait(0.1)
-	end
-	s.saving = true
-	local ok, result = pcall(DataService.save, s.player.UserId, s.data, release)
-	s.saving = false
-	return ok and result == true
+	return SaveGate.save(s, release, function(rel: boolean?): boolean
+		return DataService.save(s.player.UserId, s.data, rel)
+	end, function(t: number)
+		task.wait(t)
+	end, os.clock)
 end
 
 local function rootPosition(player: Player): Vector3?
@@ -276,6 +277,7 @@ local function performThrow(s: Session, charge: number, manual: boolean)
 	s.streak = result.streak
 	s.lastThrow = os.clock()
 	d.totalThrows += 1
+	result.bonusCoins = math.floor(result.bonusCoins * UpgradeConfig.cravingCoinMultiplier(d.upgrades))
 	d.coins += result.bonusCoins
 	local stats = d.stats
 	if result.sweetSpot then
@@ -418,7 +420,7 @@ local function onTrain(player: Player)
 	end
 	s.lastTrain = now
 	local pos = rootPosition(player)
-	local mult = if pos and Progression.inGym(pos) then GameConfig.GymMultiplier else 1
+	local mult = (if pos and Progression.inGym(pos) then GameConfig.GymMultiplier else 1) * UpgradeConfig.trainMultiplier(s.data.upgrades)
 	s.data.strength += GameMath.trainGain(s.data.strength) * mult
 	s.data.stats.trains += 1
 	s.dirtyStats = true
@@ -474,15 +476,22 @@ FusePets.OnServerInvoke = guard("FusePets", function(s, key: any)
 	if type(key) ~= "string" or #key > 80 then
 		return false, "Invalid fuse request"
 	end
+	local function reveal(rec: any, made: number)
+		local rarity, rarityIndex = GameMath.overallRarity(rec)
+		CatchEffect:FireClient(s.player, { kind = "hatch", source = "fuse", pet = rec, rarity = rarity, rarityIndex = rarityIndex, income = GameMath.petIncome(rec), fusions = made })
+	end
 	if key == "ALL" then
-		local made = Inventory.fuseAll(s.data)
+		local made, best = Inventory.fuseAll(s.data)
 		if made == 0 then
 			return false, "No groups of 3 identical pets"
 		end
 		s.data.stats.fusions += made
 		refreshPlot(s)
 		markFull(s)
-		return true, string.format("Fused %d time%s!", made, if made == 1 then "" else "s")
+		if best then
+			reveal(best, made)
+		end
+		return true, string.format("Fused %d time%s", made, if made == 1 then "" else "s")
 	end
 	local ok, res = Inventory.fuse(s.data, key)
 	if not ok then
@@ -491,8 +500,59 @@ FusePets.OnServerInvoke = guard("FusePets", function(s, key: any)
 	s.data.stats.fusions += 1
 	refreshPlot(s)
 	markFull(s)
+	reveal(res, 1)
 	local pet = PetConfig.get(res.species)
-	return true, string.format("Fused into %s %s!", res.material, if pet then pet.name else "pet")
+	return true, string.format("Fused into %s %s", res.material, if pet then pet.name else "pet")
+end)
+
+ManagePet.OnServerInvoke = guard("ManagePet", function(s, action: any, key: any)
+	if type(action) ~= "string" or not RemoteContract.PetActions[action] or type(key) ~= "string" or #key > 80 then
+		return false, "Invalid request"
+	end
+	local d = s.data
+	if #Inventory.group(d, key) == 0 then
+		return false, "You don't have that pet anymore"
+	end
+	local ok, msg = false, ""
+	if action == "Equip" then
+		ok, msg = Inventory.equipOne(d, key, GameConfig.PlotPedestals)
+	elseif action == "Unequip" then
+		ok, msg = Inventory.unequipOne(d, key)
+	elseif action == "Lock" or action == "Unlock" then
+		Inventory.setLocked(d, key, action == "Lock")
+		ok, msg = true, if action == "Lock" then "Locked: never sold or fused" else "Unlocked"
+	elseif action == "Sell" then
+		local sold, res = Inventory.sellOne(d, key)
+		if not sold then
+			return false, res
+		end
+		ok, msg = true, "Sold for " .. GameMath.formatNumber(res) .. " coins"
+	end
+	if ok then
+		refreshPlot(s)
+		markFull(s)
+	end
+	return ok, msg
+end)
+
+BuyUpgrade.OnServerInvoke = guard("BuyUpgrade", function(s, id: any)
+	local upgrade = UpgradeConfig.get(id)
+	if not upgrade then
+		return false, "Unknown upgrade"
+	end
+	local d = s.data
+	local level = d.upgrades[upgrade.id] or 0
+	local price = UpgradeConfig.nextPrice(upgrade, level)
+	if not price then
+		return false, upgrade.name .. " is maxed"
+	end
+	if d.coins < price then
+		return false, "Need " .. GameMath.formatNumber(price - d.coins) .. " more coins"
+	end
+	d.coins -= price
+	d.upgrades[upgrade.id] = level + 1
+	markFull(s)
+	return true, string.format("%s level %d", upgrade.name, level + 1)
 end)
 
 AutoSell.OnServerInvoke = guard("AutoSell", function(s, threshold: any, sellNow: any)
@@ -696,6 +756,8 @@ local function onPlayerAdded(player: Player)
 		receiptBusy = 0,
 		pendingReceipts = {},
 		paidRandomRestricted = true,
+		leaving = false,
+		released = false,
 	}
 	-- Pass ownership and policy are read server-side before the first sync; failures
 	-- fail closed (not owned / restricted).
@@ -723,7 +785,7 @@ local function onPlayerAdded(player: Player)
 	-- Offline earnings only for real, loaded saves (never for fresh fallback data).
 	local offline = 0
 	if canSave and data.lastOnline > 0 then
-		offline = Progression.offlineEarnings(s.income, os.time() - data.lastOnline)
+		offline = Progression.offlineEarnings(s.income, os.time() - data.lastOnline, UpgradeConfig.offlineBonusSeconds(data.upgrades))
 		data.coins += offline
 	end
 	checkQuests(s)
@@ -743,6 +805,7 @@ local function onPlayerRemoving(player: Player)
 	if not s then
 		return
 	end
+	s.leaving = true
 	for _, c in s.connections do
 		c:Disconnect()
 	end
@@ -758,7 +821,9 @@ end
 local receipts = Receipts.new({
 	findSession = function(userId: number)
 		local player = Players:GetPlayerByUserId(userId)
-		return if player then sessions[player] :: any else nil
+		local found = if player then sessions[player] else nil
+		-- A leaving player's save is being released: let Roblox retry on their next join.
+		return if found and not found.leaving then found :: any else nil
 	end,
 	isPresent = function(userId: number)
 		return Players:GetPlayerByUserId(userId) ~= nil
@@ -902,8 +967,28 @@ task.spawn(function()
 	while true do
 		task.wait(GameConfig.AutosaveInterval)
 		for _, s in sessions do
-			task.spawn(saveSession, s)
+			if not s.leaving then
+				task.spawn(saveSession, s)
+			end
 		end
+	end
+end)
+
+-- Robux prices for configured offers: fetched at start, retried quickly while any are
+-- still loading or errored, then refreshed every 10 minutes. Clients get the new
+-- catalog with their next full sync. With every id unset this makes no requests.
+task.spawn(function()
+	while true do
+		local ok, err = pcall(function()
+			market:refreshPrices()
+		end)
+		if not ok then
+			warn("[SnackForce] price refresh failed:", err)
+		end
+		for _, s in sessions do
+			markFull(s)
+		end
+		task.wait(if market:needsRefresh() then 30 else 600)
 	end
 end)
 
@@ -912,12 +997,14 @@ game:BindToClose(function()
 	if RunService:IsStudio() and not DataService.isAvailable() then
 		return
 	end
+	-- Final releasing save for everyone: it waits for any in-flight save, then drops the
+	-- session lock so players can load straight away on the server they move to.
 	local pending = 0
 	for _, s in sessions do
 		pending += 1
 		task.spawn(function()
-			s.saving = false -- force a final save even if an autosave is mid-flight
-			saveSession(s)
+			s.leaving = true
+			saveSession(s, true)
 			pending -= 1
 		end)
 	end

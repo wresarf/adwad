@@ -142,7 +142,10 @@ print("\n[remote contract]")
 test("Remotes folder matches RemoteContract exactly", function()
 	local folder = RS.Remotes
 	eq(#folder:GetChildren(), #RemoteContract.Remotes, "remote count")
-	eq(#RemoteContract.Remotes, 12, "contract size: 10 original remotes + StorePurchase + HatchEgg")
+	eq(#RemoteContract.Remotes, 14, "contract size: 10 original remotes + StorePurchase, HatchEgg, ManagePet, BuyUpgrade")
+	for _, original in { "ThrowFood", "TrainStrength", "BuyFood", "EquipBest", "FusePets", "AutoSell", "ToggleSetting", "StateSync", "CatchEffect", "WeatherEvent" } do
+		ok(folder:FindFirstChild(original), "original remote kept: " .. original)
+	end
 	for _, spec in RemoteContract.Remotes do
 		local r = folder:FindFirstChild(spec.name)
 		ok(r, "missing remote " .. spec.name)
@@ -1061,7 +1064,7 @@ test("v2 saves migrate to v3 with safe store defaults", function()
 	eq(g.boosts.CoinRush, 50)
 	eq(g.boosts.Hack, nil)
 	eq(g.settings.ReduceMotion, true)
-	eq(GameConfig.DataVersion, 3)
+	eq(GameConfig.DataVersion, 4)
 end)
 
 test("DataService session lock: one writer per save", function()
@@ -1119,6 +1122,215 @@ test("purchases are wired server-side only", function()
 			end
 		end
 	end
+end)
+
+print("\n[v4: upgrades, pet actions, save gate, store states]")
+local UpgradeConfig = req(Cfg.UpgradeConfig)
+local SaveGate = req(Server.SaveGate)
+
+test("SaveGate: the releasing save is the last write", function()
+	local writes = {}
+	local function writer(rel)
+		table.insert(writes, rel == true)
+		return true
+	end
+	local t = 0
+	local function clock()
+		return t
+	end
+	local s = { canSave = true, saving = false, released = false }
+	ok(SaveGate.save(s, false, writer, function() end, clock), "normal autosave")
+	ok(SaveGate.save(s, true, writer, function() end, clock), "release save")
+	eq(SaveGate.save(s, false, writer, function() end, clock), false, "autosave after release refused")
+	eq(#writes, 2, "no write after the release")
+	eq(writes[2], true)
+	-- An autosave queued behind an in-flight release must be dropped, not re-lock.
+	local q = { canSave = true, saving = true, released = false }
+	local queuedWrites = 0
+	local result = SaveGate.save(q, false, function()
+		queuedWrites += 1
+		return true
+	end, function()
+		q.saving = false
+		q.released = true -- the release finished while we waited
+	end, clock)
+	eq(result, false)
+	eq(queuedWrites, 0, "queued autosave dropped")
+	-- A writer error is reported as not saved and frees the gate.
+	local e = { canSave = true, saving = false, released = false }
+	eq(SaveGate.save(e, false, function()
+		error("datastore down")
+	end, function() end, clock), false)
+	eq(e.saving, false)
+	eq(SaveGate.save({ canSave = false, saving = false, released = false }, false, writer, function() end, clock), false, "unsaveable session")
+	ok(serverSrc:find("s.leaving = true", 1, true), "leaving players stop taking receipts")
+	ok(serverSrc:find("found and not found.leaving", 1, true), "receipts ignore leaving sessions")
+	ok(serverSrc:find("saveSession(s, true)", 1, true), "PlayerRemoving / BindToClose release the lock")
+	ok(not serverSrc:find("s.saving = false", 1, true), "no forced concurrent saves")
+end)
+
+test("coin upgrades: fixed prices, bounded levels, no luck effects", function()
+	for _, u in UpgradeConfig.Upgrades do
+		ok(#u.prices >= 1, u.id)
+		for i = 2, #u.prices do
+			ok(u.prices[i] > u.prices[i - 1], u.id .. " prices rise")
+		end
+		eq(UpgradeConfig.nextPrice(u, UpgradeConfig.maxLevel(u)), nil, u.id .. " maxed")
+	end
+	near(UpgradeConfig.trainMultiplier({}), 1, 1e-9)
+	near(UpgradeConfig.trainMultiplier({ Coach = 2 }), 1.5, 1e-9)
+	near(UpgradeConfig.cravingCoinMultiplier({ CravingChef = 3 }), 2.5, 1e-9)
+	eq(UpgradeConfig.offlineBonusSeconds({ NightShift = 2 }), 7200)
+	eq(Progression.offlineEarnings(10, 99999), math.floor(10 * GameConfig.OfflineMaxSeconds * GameConfig.OfflineRate))
+	eq(Progression.offlineEarnings(10, 99999, 3600), math.floor(10 * (GameConfig.OfflineMaxSeconds + 3600) * GameConfig.OfflineRate))
+	local src = Cfg.UpgradeConfig.Source
+	ok(not src:find("Luck", 1, true) and not src:find("Gems", 1, false) or src:find("never Gems", 1, true), "upgrades never touch luck or Gems")
+	ok(serverSrc:find('BuyUpgrade.OnServerInvoke = guard("BuyUpgrade"', 1, true))
+	ok(serverSrc:find("d.coins -= price", 1, true), "upgrades cost coins")
+end)
+
+test("v3 saves migrate to v4: upgrades default empty and are clamped", function()
+	local d = PlayerData.sanitize({ version = 3, coins = 50, gems = 7, pawTokens = 4, receipts = { R1 = 10 } })
+	eq(next(d.upgrades), nil)
+	eq(d.gems, 7)
+	eq(d.pawTokens, 4)
+	eq(d.receipts.R1, 10, "receipt history kept across the migration")
+	local g = PlayerData.sanitize({ upgrades = { Coach = 99, NightShift = -3, CravingChef = 1.7, Hack = 5 } })
+	eq(g.upgrades.Coach, UpgradeConfig.maxLevel(UpgradeConfig.get("Coach")))
+	eq(g.upgrades.NightShift, nil)
+	eq(g.upgrades.CravingChef, 1)
+	eq(g.upgrades.Hack, nil)
+	local v1 = PlayerData.sanitize({ coins = 5, pets = { { species = "Bunbun", material = "Gold", size = "Normal", equipped = true, locked = true } } })
+	eq(#v1.pets, 1)
+	eq(v1.pets[1].locked, true, "locked flag survives")
+	eq(next(v1.upgrades), nil)
+end)
+
+test("pet actions: equip/unequip one, lock protects, sell one asks the server", function()
+	local d = PlayerData.defaults()
+	local function add(species, material, equipped)
+		local rec = Inventory.newPet(d, species, material, "Normal")
+		rec.equipped = equipped
+		table.insert(d.pets, rec)
+		return rec
+	end
+	local key = "Bunbun|Normal|Normal"
+	for _ = 1, 3 do
+		add("Bunbun", "Normal", false)
+	end
+	-- Fill the plot with distinct species (no accidental fusion groups).
+	local fillers = {}
+	for _, pet in PetConfig.Pets do
+		if pet.id ~= "Bunbun" and #fillers < GameConfig.PlotPedestals then
+			table.insert(fillers, pet.id)
+			add(pet.id, "Normal", true)
+		end
+	end
+	local okEq, msg = Inventory.equipOne(d, key, GameConfig.PlotPedestals)
+	eq(okEq, false, "plot full")
+	ok(msg:find("Unequip", 1, true), msg)
+	ok((Inventory.unequipOne(d, fillers[1] .. "|Normal|Normal")))
+	ok((Inventory.equipOne(d, key, GameConfig.PlotPedestals)))
+	eq(Inventory.equippedCount(d), GameConfig.PlotPedestals)
+	eq((Inventory.unequipOne(d, "Nope|Normal|Normal")), false)
+	-- sell one prefers a copy that isn't on the plot
+	local coins = d.coins
+	local sold, value = Inventory.sellOne(d, key)
+	ok(sold)
+	ok(value > 0 and d.coins == coins + value)
+	local bunnies = Inventory.group(d, key)
+	eq(#bunnies, 2)
+	local stillEquipped = 0
+	for _, b in bunnies do
+		if b.equipped then
+			stillEquipped += 1
+		end
+	end
+	eq(stillEquipped, 1, "equipped copy kept")
+	-- lock protects from every removal path
+	eq(Inventory.setLocked(d, key, true), 2)
+	local s2, why = Inventory.sellOne(d, key)
+	eq(s2, false)
+	ok(why:find("Unlock", 1, true))
+	add("Bunbun", "Normal", false).locked = true
+	eq((Inventory.fuse(d, key)), false, "locked pets don't fuse")
+	eq((Inventory.fuseAll(d)), 0)
+	d.settings.AutoSellRarity = "Legendary"
+	d.settings.KeepMutated = false
+	Inventory.sellMatching(d)
+	eq(#Inventory.group(d, key), 3, "sell matching skips locked")
+	Inventory.setLocked(d, key, false)
+	local made, best = Inventory.fuseAll(d)
+	eq(made, 1)
+	eq(best.material, "Gold", "fuse all reports the result")
+	ok(table.find(d.pets, best), "reported pet is owned")
+	ok(serverSrc:find('ManagePet.OnServerInvoke = guard("ManagePet"', 1, true))
+	ok(serverSrc:find("RemoteContract.PetActions[action]", 1, true), "pet actions validated")
+end)
+
+test("store states: loading until priced, retried, pending and insufficient copy", function()
+	local fetches = 0
+	local fail = true
+	local fake = {
+		GetProductInfoAsync = function()
+			fetches += 1
+			if fail then
+				error("http down")
+			end
+			return { IsForSale = true, PriceInRobux = 49 }
+		end,
+		PromptProductPurchase = function() end,
+	}
+	local m = MarketService.new(fake, {})
+	eq(m:needsRefresh(), false, "nothing configured: nothing to fetch")
+	local product = MonetizationConfig.Products[2]
+	product.id = 9001
+	eq(m:catalog().products[2].status, "loading", "configured but not fetched yet")
+	ok(m:needsRefresh())
+	m:refreshPrices()
+	eq(m:catalog().products[2].status, "error")
+	ok(m:needsRefresh(), "errors are retried")
+	fail = false
+	m:refreshPrices()
+	eq(m:catalog().products[2].status, "ok")
+	eq(m:catalog().products[2].price, 49)
+	eq(m:needsRefresh(), false)
+	eq(m:catalog().products[1].status, "unset", "unset ids stay unset")
+	product.id = 0
+	local Panels = req(SP.StarterPlayerScripts.Client.Panels)
+	local pt = Panels._priceText
+	eq((pt({ status = "unset" })), "Not available yet")
+	eq((pt({ status = "loading" })), "Checking price…")
+	eq((pt({ status = "error" })), "Try again later")
+	eq((pt({ status = "ok", price = 49 })), "R$ 49")
+	eq((pt({ status = "ok", price = 49 }, false, true)), "Finishing…", "pending receipt")
+	eq((pt({ status = "ok", price = 49 }, true)), "Owned ✓")
+	for _, l in { { status = "unset" }, { status = "loading" }, { status = "error" }, { status = "offsale" } } do
+		local _, style = pt(l)
+		eq(style, "disabled", l.status .. " is never purchasable")
+	end
+	local panelsSrc = SP.StarterPlayerScripts.Client.Panels.Source
+	ok(panelsSrc:find("Need %d more 💎", 1, true), "insufficient Gems explains the gap")
+	ok(panelsSrc:find('"Need " .. GameMath.formatNumber(price - coins) .. " more"', 1, true), "insufficient coins explains the gap")
+end)
+
+test("paid random audit: no Robux path reaches eggs, tokens or luck", function()
+	-- Every way Paw Tokens are added on the server goes through giveTokens, which is only
+	-- called from gameplay rewards; receipts and Gem offers never call it.
+	local _, direct = serverSrc:gsub("pawTokens%s*=%s*", "")
+	ok(direct <= 2, "pawTokens only changed by giveTokens and egg spending")
+	local buyOffer = serverSrc:match("local function buyOffer.-\nend\n")
+	ok(buyOffer and not buyOffer:find("giveTokens", 1, true) and not buyOffer:find("pawTokens", 1, true), "Gem offers never give tokens")
+	ok(not buyOffer:find("Luck", 1, true), "Gem offers never give luck")
+	for _, o in MonetizationConfig.GemOffers do
+		if o.grant.kind == "boost" then
+			eq(o.grant.boost, "CoinRush", "only the coin boost is sold")
+		end
+	end
+	for _, p in MonetizationConfig.GamePasses do
+		ok(not p.key:find("Luck") and not p.key:find("Token") and not p.key:find("Egg"), p.key .. " is not a luck/egg pass")
+	end
+	ok(serverSrc:find("if EggConfig.isPaidRandom(egg) then market:paidRandomRestricted(s.player)", 1, true))
 end)
 
 test("UI: readable fixed type, sufficient contrast, reduced motion", function()

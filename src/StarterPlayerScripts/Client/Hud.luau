@@ -382,30 +382,53 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 
 	------------------------------------------------ hatch / purchase reveal
 	local hatch = UI.new("TextButton", { Text = "", AutoButtonColor = false, BackgroundColor3 = C.Scrim, BackgroundTransparency = 0.45, Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 34, Parent = popups })
-	local hatchCard = UI.surface(hatch, UDim2.fromOffset(380, 400), UDim2.new(0.5, -190, 0.5, -200), C.Ivory)
+	local hatchCard = UI.surface(hatch, UDim2.fromOffset(400, 430), UDim2.new(0.5, -200, 0.5, -215), C.Ivory)
 	hatchCard.ZIndex = 35
-	self.hatchView = UI.new("Frame", { BackgroundColor3 = C.Paper, Size = UDim2.fromOffset(220, 200), Position = UDim2.new(0.5, -110, 0, 20), ZIndex = 36, Parent = hatchCard })
+	self.hatchHeader = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 24), UDim2.fromOffset(12, 12), { size = T.Small, color = C.Muted, align = Enum.TextXAlignment.Center, z = 36 })
+	self.hatchView = UI.new("Frame", { BackgroundColor3 = C.Paper, Size = UDim2.fromOffset(220, 196), Position = UDim2.new(0.5, -110, 0, 40), ZIndex = 36, Parent = hatchCard })
 	UI.corner(self.hatchView, UI.Radius.l)
 	self.hatchEgg = UI.new("Frame", { BackgroundColor3 = C.Paper, Size = UDim2.fromOffset(110, 140), Position = UDim2.new(0.5, -55, 0.5, -70), ZIndex = 37, Parent = self.hatchView })
 	UI.corner(self.hatchEgg, 55)
 	UI.stroke(self.hatchEgg, C.Line, 2)
-	self.hatchRarity = UI.tag(hatchCard, "", C.Sand, C.Charcoal, UDim2.new(0.5, 0, 0, 232))
+	self.hatchRarity = UI.tag(hatchCard, "", C.Sand, C.Charcoal, UDim2.new(0.5, 0, 0, 246))
 	self.hatchRarity.AnchorPoint = Vector2.new(0.5, 0)
 	self.hatchRarity.ZIndex = 36
-	self.hatchName = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 34), UDim2.fromOffset(12, 262), { size = T.Title, font = UI.Display, align = Enum.TextXAlignment.Center, z = 36 })
-	self.hatchInfo = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 22), UDim2.fromOffset(12, 298), { size = T.Small, color = C.Muted, align = Enum.TextXAlignment.Center, z = 36 })
-	local hatchOk = UI.button(hatchCard, "Nice", "primary", UDim2.fromOffset(160, 50), UDim2.new(0.5, -80, 1, -66))
-	hatchOk.ZIndex = 36
-	for _, d in hatchOk:GetDescendants() do
-		if d:IsA("GuiObject") then
-			d.ZIndex = 37
+	self.hatchName = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 34), UDim2.fromOffset(12, 276), { size = T.Title, font = UI.Display, align = Enum.TextXAlignment.Center, z = 36 })
+	self.hatchInfo = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 22), UDim2.fromOffset(12, 312), { size = T.Small, color = C.Muted, align = Enum.TextXAlignment.Center, z = 36 })
+	local function raise(b: GuiObject)
+		b.ZIndex = 36
+		for _, d in b:GetDescendants() do
+			if d:IsA("GuiObject") then
+				d.ZIndex = 37
+			end
 		end
 	end
+	local hatchOk = UI.button(hatchCard, "Done", "secondary", UDim2.fromOffset(170, 50), UDim2.new(0.5, -178, 1, -66))
+	raise(hatchOk)
+	-- "Hatch again" only appears after an egg hatch the player can afford to repeat.
+	local hatchAgain = UI.button(hatchCard, "Hatch again", "primary", UDim2.fromOffset(170, 50), UDim2.new(0.5, 8, 1, -66))
+	raise(hatchAgain)
+	self.hatchOk = hatchOk
+	self.hatchAgain = hatchAgain
 	local function closeHatch()
+		if self.hatchRevealing then
+			self.hatchSkip = true -- first tap skips the wobble, second closes
+			return
+		end
 		hatch.Visible = false
 	end
 	hatchOk.Activated:Connect(closeHatch)
 	hatch.Activated:Connect(closeHatch)
+	hatchAgain.Activated:Connect(function()
+		local eggId = self.hatchEggId
+		if self.hatchRevealing or not eggId then
+			return
+		end
+		local ok, msg = ctx.invoke("HatchEgg", eggId)
+		if not ok then
+			self:toast(msg, C.Terracotta)
+		end
+	end)
 	self.hatch = hatch
 
 	------------------------------------------------ cutscene letterbox + skip
@@ -856,6 +879,19 @@ function Hud:showHatch(payload: any)
 		end
 	end
 	local rc = rarityColor(payload.rarity)
+	local source = payload.source
+	self.hatchHeader.Text = if source == "fuse"
+		then (if (payload.fusions or 1) > 1 then string.format("Fused %d times · best result", payload.fusions) else "Fusion complete")
+		elseif source == "offer" then "Added to your pets"
+		else (if egg then egg.name .. " hatched" else "Hatched")
+	self.hatchEggId = if source == "egg" and egg then egg.id else nil
+	local st = self.ctx.getState()
+	local canAgain = egg ~= nil and source == "egg" and (st.pawTokens or 0) >= egg.cost
+	self.hatchAgain.Visible = canAgain
+	if canAgain and egg then
+		UI.setButton(self.hatchAgain, string.format("Again · %d 🐾", egg.cost), "primary")
+	end
+	self.hatchOk.Position = if canAgain then UDim2.new(0.5, -178, 1, -66) else UDim2.new(0.5, -85, 1, -66)
 	self.hatchRarity.Text = payload.rarity or "Common"
 	self.hatchRarity.BackgroundColor3 = rc
 	self.hatchRarity.TextColor3 = UI.onColor(rc)
@@ -871,15 +907,22 @@ function Hud:showHatch(payload: any)
 	local reduced = UI.reducedMotion()
 	local eggArt = self.hatchEgg :: Frame
 	local view = self.hatchView :: Frame
+	self.hatchRevealing = true
+	self.hatchSkip = false
 	task.spawn(function()
 		if payload.source == "egg" and not reduced then
+			-- Anticipation: three wobbles that grow, each skippable with a tap.
 			for i = 1, 3 do
-				UI.tween(eggArt, 0.12, { Rotation = 12 * (if i % 2 == 0 then -1 else 1) })
+				if self.hatchSkip then
+					break
+				end
+				UI.tween(eggArt, 0.12, { Rotation = (6 + i * 4) * (if i % 2 == 0 then -1 else 1) })
 				task.wait(0.14)
 				UI.tween(eggArt, 0.12, { Rotation = 0 })
 				task.wait(0.22)
 			end
 		end
+		self.hatchRevealing = false
 		eggArt.Visible = false
 		if pet and self.hatch.Visible then
 			UI.petViewport(view, rec, UDim2.fromScale(1, 1), UDim2.new())

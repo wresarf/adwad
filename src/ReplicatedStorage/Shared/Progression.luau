@@ -98,11 +98,12 @@ function Progression.discoveryReward(speciesId: string): number
 end
 
 -- Coins earned while offline for `elapsed` seconds at `income` coins/sec.
-function Progression.offlineEarnings(income: number, elapsed: number): number
+-- `bonusSeconds` extends the cap (Night Shift upgrade).
+function Progression.offlineEarnings(income: number, elapsed: number, bonusSeconds: number?): number
 	if income <= 0 or elapsed ~= elapsed or elapsed < GameConfig.OfflineMinSeconds then
 		return 0
 	end
-	local seconds = math.min(elapsed, GameConfig.OfflineMaxSeconds)
+	local seconds = math.min(elapsed, GameConfig.OfflineMaxSeconds + math.max(0, bonusSeconds or 0))
 	return math.floor(income * seconds * GameConfig.OfflineRate)
 end
 

@@ -33,7 +33,7 @@ local StateSync = Remotes:WaitForChild("StateSync") :: RemoteEvent
 local CatchEffect = Remotes:WaitForChild("CatchEffect") :: RemoteEvent
 local WeatherEvent = Remotes:WaitForChild("WeatherEvent") :: RemoteEvent
 
-local INVOKABLE = { BuyFood = true, EquipBest = true, FusePets = true, AutoSell = true, ToggleSetting = true, StorePurchase = true, HatchEgg = true }
+local INVOKABLE = { BuyFood = true, EquipBest = true, FusePets = true, AutoSell = true, ToggleSetting = true, StorePurchase = true, HatchEgg = true, ManagePet = true, BuyUpgrade = true }
 
 ------------------------------------------------------------------ state
 
@@ -62,6 +62,8 @@ local state: { [string]: any } = {
 	store = { passes = {}, products = {} },
 	coinRushEndsAt = 0,
 	incomeMult = 1,
+	upgrades = {},
+	receiptPending = false,
 	loaded = false,
 }
 
@@ -359,6 +361,10 @@ table.insert(connections, UserInputService.InputBegan:Connect(function(input, pr
 		if fx:isPlaying() then
 			skip()
 		end
+		return
+	end
+	if input.KeyCode == Enum.KeyCode.ButtonB and hud.panels:isOpen() then
+		hud.panels:toggle(nil) -- gamepad back closes the open panel
 		return
 	end
 	if processed then
