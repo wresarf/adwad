@@ -1235,6 +1235,22 @@ local landmarks: { [string]: (Instance) -> () } = {
 	end,
 }
 
+-- Flat, non-colliding ground disc (lane tone patches and biome blends). Flat so the
+-- landing lane stays a clean read from the Throw Line.
+local function groundPatch(parent: Instance, x: number, z: number, d: number, color: Color3, material: Enum.Material)
+	return makePart({ name = "GroundPatch", shape = Enum.PartType.Cylinder, size = Vector3.new(0.14, d, d), cframe = CFrame.new(x, 0.07, z) * CFrame.Angles(0, 0, math.pi / 2), color = color, material = material, canCollide = false, castShadow = false, parent = parent })
+end
+
+-- A tall gate pylon at a biome boundary, flag in the biome's colour, just outside the lane.
+local function gatePylon(parent: Instance, pos: Vector3, style: Style, side: number)
+	column(parent, "PylonBase", pos, 1.2, 4.2, style.trim, style.trimMat, true)
+	block(parent, "Pylon", Vector3.new(1.6, 17, 1.6), CFrame.new(pos + Vector3.new(0, 9.7, 0)), C.woodDark, SM.Wood, true)
+	blob(parent, "PylonCap", Vector3.new(2.6, 2.6, 2.6), CFrame.new(pos + Vector3.new(0, 18.6, 0)), style.tag)
+	-- The flag hangs toward the lane edge so both sides frame the gate.
+	block(parent, "PylonFlag", Vector3.new(5.4, 3.6, 0.2), CFrame.new(pos + Vector3.new(-side * 3.4, 15.4, 0)), style.tag, SM.Fabric, false)
+	block(parent, "PylonFlagStripe", Vector3.new(5.4, 0.6, 0.22), CFrame.new(pos + Vector3.new(-side * 3.4, 14.2, 0)), C.ivory, SM.Fabric, false)
+end
+
 local function buildBiomes(root: Instance)
 	local biomesFolder = folder("Biomes", root)
 	local width = BiomeConfig.Width
@@ -1250,6 +1266,31 @@ local function buildBiomes(root: Instance)
 		for _, sx in { -1, 1 } do
 			block(bf, "Curb", Vector3.new(1.6, 1.4, length), CFrame.new(sx * (width / 2 - 0.8), 0.7, midZ), style.trim, style.trimMat)
 			makePart({ name = "LaneLine", size = Vector3.new(0.8, 0.1, length), cframe = CFrame.new(sx * lane, 0.05, midZ), color = C.ivory, transparency = 0.3, canCollide = false, castShadow = false, parent = bf })
+		end
+
+		-- Quiet tonal patches inside the lane so the field reads as ground, not a flat sheet.
+		local tones = folder("LaneTones", bf)
+		for _ = 1, math.floor(length / 28) do
+			local tone = if rand() < 0.5 then style.ground:Lerp(C.ivory, randRange(0.05, 0.1)) else style.ground:Lerp(C.charcoal, randRange(0.04, 0.08))
+			groundPatch(tones, randRange(-lane + 8, lane - 8), Z0 + randRange(biome.startDistance + 10, biome.endDistance - 10), randRange(10, 26), tone, style.groundMat)
+		end
+		-- Biome blend: patches of the previous ground spill across the boundary, and a gate
+		-- pylon pair marks the border from far down the lane.
+		local prev = BiomeConfig.Biomes[biome.order - 1]
+		if prev then
+			local prevStyle = Styles[prev.id] or Styles.Meadow
+			local blend = folder("Blend", bf)
+			local edge = Z0 + biome.startDistance
+			for i = 1, 34 do
+				local t = rand()
+				local z = edge + (t - 0.5) * 50
+				local color = if z < edge then style.ground:Lerp(prevStyle.ground, 0.25) else prevStyle.ground:Lerp(style.ground, 0.35)
+				groundPatch(blend, randRange(-width / 2 + 6, width / 2 - 6), z, randRange(8, 20), color, if z < edge then style.groundMat else prevStyle.groundMat)
+				local _ = i
+			end
+			for _, sx in { -1, 1 } do
+				gatePylon(bf, Vector3.new(sx * (lane + 5), 0, edge), style, sx)
+			end
 		end
 
 		-- Small entry signs beside the lane on both sides, facing the throw line.
@@ -1268,11 +1309,13 @@ local function buildBiomes(root: Instance)
 
 		-- Decorations live outside the landing lane.
 		local deco = folder("Decor", bf)
-		local count = math.floor(length / 10)
+		-- Denser near the lane edge (the band players actually see while throwing).
+		local count = math.floor(length / 6)
 		local decorate = decorators[biome.id]
-		for _ = 1, count do
+		for i = 1, count do
 			local sx = if rand() < 0.5 then -1 else 1
-			local x = sx * randRange(lane + 14, width / 2 - 10)
+			local near = i % 3 ~= 0
+			local x = sx * (if near then randRange(lane + 14, lane + 46) else randRange(lane + 46, width / 2 - 10))
 			local z = Z0 + randRange(biome.startDistance + 12, biome.endDistance - 8)
 			if decorate then
 				decorate(deco, Vector3.new(x, 0, z))

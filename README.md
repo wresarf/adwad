@@ -71,7 +71,9 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 
 - **Snacks:** bought with earned coins.
 - **Safari Eggs** (Hatchery stall or **B**): opened with **Paw Tokens**. You earn tokens from quests, first landings in a zone, new species and every 50 catches, and you can't buy them. Each egg shows its complete odds before you hatch.
-- **Store:** game passes (Double Coins, Auto-Throw Pass, Big Backpack, Golden Trail), Gem packs (developer products) and fixed-content Gem offers. All Robux IDs are `0` (unset) in `Config/MonetizationConfig.luau`, so those offers show "Not available yet" and never open a prompt. Once real IDs are set, the server reads prices from MarketplaceService.
+- **Free perks:** Double Coins, Auto-Throw, Big Backpack (+150 pets) and Golden Trail are built in for every player. They are not Marketplace passes, and there's no purchase or ownership check. Golden Trail can be turned off in Settings.
+- **Store:** Gem packs (developer products) and fixed-content Gem offers. All Gem pack IDs are `0` (unset) in `Config/MonetizationConfig.luau`, so they show "Not available yet" and never open a prompt. Once real IDs are set, the server reads prices from MarketplaceService.
+- **Sound:** all effects use sounds built into the Roblox client (`rbxasset://sounds`). Effects and music have separate settings. Music is off until `Config/SoundConfig.MusicId` is set to a track you're allowed to use. See [`docs/ART_AND_AUDIO.md`](docs/ART_AND_AUDIO.md).
 - **Security:** grants only happen in one server-side `ProcessReceipt`. It records each PurchaseId in the session-locked save and returns PurchaseGranted only after the save succeeds. See [`docs/DESIGN_AUDIT.md`](docs/DESIGN_AUDIT.md) for the full design and the paid-random-items reasoning.
 
 ## Layout
