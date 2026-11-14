@@ -281,11 +281,41 @@ approximate renders, not Roblox screenshots.
 **Audio:** none of the verified built-in client sounds is an ambience loop, so ambience
 and music stay off until the owner sets an uploaded asset id they have permission to use.
 
+## v9: biome edge silhouettes (follow-up to section 6)
+
+Before this pass, every biome's edge was the same 45°-rotated ridge in a different colour.
+Each biome now has its own edge profile, built by `buildBiomeEdges` in `WorldBuilder`:
+
+| Biome | Edge profile |
+| --- | --- |
+| Meadow | Rolling round hills, tall back hills and small copses |
+| Dunes | Crescent dunes (long slope toward the lane) and banded flat-top mesas |
+| Tundra | Sharp ridges with snow caps, low ice shelves and far peaks |
+| Volcano | Stepped basalt columns, small light-free lava seams and an ash ridge |
+| Swamp | Low moss banks, a tall back bank, leaning dead trees and bog pools |
+| Nuclear | Terraced spoil heaps, a hazard-striped barrier and lattice pylons |
+
+A ground apron continues each biome's terrain past the side walls. These stay as they
+were: biome distances, physics, the lane and its markings, landmarks, and the Space and
+Moon cutscene sets.
+
+**Rules:**
+- Edge parts never collide and never cast shadows.
+- None crosses into the playable strip (checked from the rotated extents).
+- None is larger than 2,048 studs.
+- The only glow is the small Neon lava seams, which have no light source.
+
+**Budget:** 3,549 world parts in total, with 31 lights and 22 emitters.
+
+**Evidence:** before and after lane renders of each biome. They are approximate offline
+renders, not Studio screenshots.
+
+**Test:** "biome edges: six distinct silhouettes, outside the playable strip, safe parts".
+
 ## What is still open
 
-- Nothing in this pass has been played or heard in Roblox Studio. Studio can't run in this
-  environment.
-- Music and ambience still need audio the owner uploads and has permission to use.
+- Nothing has been played or heard in Roblox Studio. Studio can't run in this environment.
+- Music and ambience still need audio the owner uploads and has permission to use. Set its
+  id as `MusicId` in `Config/SoundConfig.luau`.
 - Gem pack IDs are still unset.
-- The biomes' terrain silhouettes were not reworked beyond the v5 and v7 boundary
-  markers.
+- Lighting doesn't change between biomes yet. Only weather changes the tint.

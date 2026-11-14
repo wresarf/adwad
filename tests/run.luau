@@ -675,8 +675,11 @@ test("scenery stays out of the throw lane and the gym", function()
 	local half = BiomeConfig.Width / 2
 	local mountains = 0
 	for _, d in root:GetDescendants() do
-		if d:IsA("BasePart") and d.Name == "Mountain" then
+		if d:IsA("BasePart") and (d.Name == "Mountain" or (d.Parent and d.Parent.Name == "Edge")) then
 			mountains += 1
+			if d.Name ~= "Mountain" then
+				continue -- biome edges have their own geometry test
+			end
 			local cy = d.CFrame.Position.Y
 			local halfAtGround = d.Size.X * 0.7072 - math.abs(cy)
 			ok(math.abs(d.CFrame.Position.X) - halfAtGround >= half - 0.5, "mountain intrudes into the lane at x=" .. d.CFrame.Position.X)
@@ -1997,6 +2000,64 @@ test("world budgets: parts, lights and emitters bounded; low quality covers the 
 	print(string.format("        (%d parts, %d lights, %d emitters)", parts, lights, emitters))
 	local fx = SP.StarterPlayerScripts.Client.Effects.Source
 	ok(fx:find('local world = Workspace:FindFirstChild("SnackWorld")', 1, true) and fx:find('d:IsA("PointLight")', 1, true), "Low quality walks every SnackWorld light")
+end)
+
+print("\n[v9: biome edges]")
+test("biome edges: six distinct silhouettes, outside the playable strip, safe parts", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local half = BiomeConfig.Width / 2
+	local WorldBuilder = req(Server.WorldBuilder)
+	local signatures = {}
+	for _, b in BiomeConfig.Biomes do
+		local edge = root.Biomes[b.id]:FindFirstChild("Edge")
+		ok(edge, b.id .. " edge")
+		local z0 = root.Biomes[b.id].Ground.CFrame.Position.Z - (b.startDistance + b.endDistance) / 2
+		local names, top, n = {}, 0, 0
+		for _, d in edge:GetDescendants() do
+			if d:IsA("BasePart") then
+				n += 1
+				names[d.Name] = (names[d.Name] or 0) + 1
+				ok(not d.CanCollide and not d.CastShadow, d:GetFullName() .. " collides or casts shadows")
+				ok(d.Size.X <= 2048 and d.Size.Y <= 2048 and d.Size.Z <= 2048, "oversized " .. d.Name)
+				-- Inner extent (any rotation): centre minus the largest half-extent.
+				local p = d.CFrame.Position
+				local reach = math.max(d.Size.X, d.Size.Y, d.Size.Z) / 2
+				if d.Name ~= "EdgeApron" then
+					local cf, sz = d.CFrame, d.Size
+					local hx = math.abs(cf.RightVector.X) * sz.X / 2 + math.abs(cf.UpVector.X) * sz.Y / 2 + math.abs(cf.LookVector.X) * sz.Z / 2
+					ok(math.abs(p.X) - hx >= half - 0.5, string.format("%s crosses into the playable strip (inner x %.1f)", d:GetFullName(), math.abs(p.X) - hx))
+					ok(math.abs(p.X) > half, d:GetFullName() .. " centre inside the strip")
+				else
+					ok(math.abs(p.X) - d.Size.X / 2 >= half - 0.01, "apron starts at the ground edge")
+				end
+				ok(p.Z > z0 + b.startDistance - 60 and p.Z < z0 + b.endDistance + 60, d.Name .. " outside its biome")
+				local hy = math.abs(d.CFrame.RightVector.Y) * d.Size.X / 2 + math.abs(d.CFrame.UpVector.Y) * d.Size.Y / 2 + math.abs(d.CFrame.LookVector.Y) * d.Size.Z / 2
+				local t = p.Y + hy
+				top = math.max(top, t)
+			end
+		end
+		ok(n >= 12, b.id .. " edge too sparse: " .. n)
+		ok(top < 160, b.id .. " edge towers over the lane: " .. top)
+		-- Signature: the set of part kinds used. Every biome's set is different.
+		local kinds = {}
+		for name in names do
+			if name ~= "EdgeApron" then
+				table.insert(kinds, name)
+			end
+		end
+		table.sort(kinds)
+		local sig = table.concat(kinds, ",")
+		ok(not signatures[sig], b.id .. " looks like " .. tostring(signatures[sig]))
+		signatures[sig] = b.id
+	end
+	eq(#WorldBuilder.EdgeKinds, #BiomeConfig.Biomes, "one edge profile per biome")
+	-- Only small, light-free glow: lava seams.
+	for _, d in root.Biomes:GetDescendants() do
+		if d:IsA("BasePart") and d.Parent and d.Parent.Name == "Edge" and d.Material == R.Enum.Material.Neon then
+			eq(d.Name, "LavaSeam", "only lava seams glow")
+			ok(not d:FindFirstChildOfClass("PointLight"), "no light on edge glow")
+		end
+	end
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

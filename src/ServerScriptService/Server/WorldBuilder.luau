@@ -1328,6 +1328,166 @@ local function gatePylon(parent: Instance, pos: Vector3, style: Style, side: num
 	block(parent, "PylonFlagStripe", Vector3.new(5.4, 0.6, 0.22), CFrame.new(pos + Vector3.new(-side * 3.4, 14.2, 0)), C.ivory, SM.Fabric, false)
 end
 
+------------------------------------------------------------------ biome edges
+
+-- Each biome has its own edge silhouette beyond the playable ground (|x| > Width / 2),
+-- so a zone reads from its skyline, not only its ground colour: rolling round hills
+-- (Meadow), crescent dunes and banded mesas (Dunes), sharp snow ridges (Tundra), stepped
+-- basalt columns (Volcano), low mossy banks with dead trees (Swamp) and terraced spoil
+-- heaps with lattice pylons (Nuclear). Edge parts never collide and never cast shadows
+-- (they sit behind the invisible side walls), and none crosses into the playable strip.
+local function edgePart(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material, shape: Enum.PartType?): Part
+	return makePart({ name = name, size = size, cframe = cf, color = color, material = material, shape = shape, canCollide = false, castShadow = false, parent = parent })
+end
+
+local function edgeBlob(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material): Part
+	local p = edgePart(parent, name, size, cf, color, material)
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Parent = p
+	return p
+end
+
+local function edgeWedge(parent: Instance, name: string, size: Vector3, cf: CFrame, color: Color3, material: Enum.Material): WedgePart
+	local w = makeWedge(parent, name, size, cf, color, material)
+	w.CanCollide = false
+	w.CastShadow = false
+	w.CanQuery = false
+	w.CanTouch = false
+	return w
+end
+
+-- A sharp ridge running along Z: two wedges leaning on each other (a triangular prism).
+local function ridge(parent: Instance, name: string, center: Vector3, len: number, h: number, halfW: number, color: Color3, material: Enum.Material)
+	edgeWedge(parent, name, Vector3.new(len, h, halfW), CFrame.new(center + Vector3.new(-halfW / 2, h / 2, 0)) * CFrame.Angles(0, math.pi / 2, 0), color, material)
+	edgeWedge(parent, name, Vector3.new(len, h, halfW), CFrame.new(center + Vector3.new(halfW / 2, h / 2, 0)) * CFrame.Angles(0, -math.pi / 2, 0), color, material)
+end
+
+type EdgeFn = (parent: Instance, side: number, z: number, x0: number, style: any, seg: number) -> ()
+
+local edges: { [string]: EdgeFn } = {
+	Meadow = function(parent, side, z, x0, style, seg)
+		local w, h = randRange(60, 90), randRange(22, 36)
+		local x = side * (x0 + 18 + w * 0.4)
+		edgeBlob(parent, "MeadowHill", Vector3.new(w, h * 2, randRange(70, 95)), CFrame.new(x, -h * 0.35, z), style.hill:Lerp(C.leafLight, rand() * 0.25), SM.Grass)
+		-- A taller back hill every other segment, and a small copse on the near crest.
+		if seg % 2 == 0 then
+			edgeBlob(parent, "MeadowBackHill", Vector3.new(120, 110, 130), CFrame.new(side * (x0 + 120), -20, z + 20), style.hill:Lerp(C.leafDark, 0.25), SM.Grass)
+		end
+		for k = 0, 1 do
+			local tx = side * (x0 + 12 + k * 9)
+			edgePart(parent, "CopseTrunk", Vector3.new(1.6, 6, 1.6), CFrame.new(tx, 3, z + k * 7 - 3), C.wood, SM.Wood)
+			edgeBlob(parent, "CopseLeaves", Vector3.new(8, 7, 8), CFrame.new(tx, 8.5, z + k * 7 - 3), C.leaf:Lerp(C.leafLight, rand() * 0.5), SM.Grass)
+		end
+	end,
+	Dunes = function(parent, side, z, x0, style, seg)
+		-- Crescent dune: the long slope faces the lane, the steep side faces away.
+		local h = randRange(16, 28)
+		edgeWedge(parent, "Dune", Vector3.new(randRange(60, 80), h, randRange(44, 60)), CFrame.new(side * (x0 + 32), h / 2, z) * CFrame.Angles(0, side * math.pi / 2, 0), style.ground:Lerp(style.hill, 0.4), SM.Sand)
+		if seg % 2 == 1 then
+			-- Banded flat-top mesa behind it.
+			local mx = side * (x0 + 82)
+			local widths, heights = { 44, 36, 30 }, { 20, 14, 8 }
+			local colors: { Color3 } = { style.hill, style.hill:Lerp(C.cream, 0.25), style.hill:Lerp(C.terracotta, 0.3) }
+			local y = 0
+			for k = 1, 3 do
+				edgePart(parent, "MesaBand", Vector3.new(widths[k], heights[k], widths[k] * 1.3), CFrame.new(mx, y + heights[k] / 2, z), colors[k], SM.Sandstone)
+				y += heights[k]
+			end
+		end
+	end,
+	Tundra = function(parent, side, z, x0, style, seg)
+		local h = randRange(55, 85)
+		local cx = side * (x0 + 50)
+		ridge(parent, "IcePeak", Vector3.new(cx, 0, z), randRange(50, 70), h, randRange(24, 32), style.hill, SM.Slate)
+		-- Snow cap: a smaller ridge on the upper third.
+		ridge(parent, "SnowCap", Vector3.new(cx, h * 0.62, z), 40, h * 0.38, 11, C.snow, SM.Sand)
+		-- Low ice shelf at the ground edge.
+		edgePart(parent, "IceShelf", Vector3.new(14, 3, randRange(40, 60)), CFrame.new(side * (x0 + 9), 1.5, z + 10), Color3.fromRGB(200, 226, 236), SM.Ice)
+		if seg % 3 == 0 then
+			ridge(parent, "FarPeak", Vector3.new(side * (x0 + 130), 0, z + 30), 80, h * 1.35, 44, style.hill:Lerp(C.charcoal, 0.15), SM.Slate)
+		end
+	end,
+	Volcano = function(parent, side, z, x0, style, seg)
+		-- Stepped basalt columns rising away from the lane.
+		for k = 0, 4 do
+			local hgt = 14 + k * 11 + randRange(-4, 4)
+			local d = randRange(12, 17)
+			edgePart(parent, "BasaltColumn", Vector3.new(hgt, d, d), CFrame.new(side * (x0 + 12 + k * 13), hgt / 2, z + randRange(-20, 20)) * CFrame.Angles(0, 0, math.pi / 2), style.hill:Lerp(C.charcoal, 0.2 + rand() * 0.2), SM.Basalt, Enum.PartType.Cylinder)
+		end
+		if seg % 2 == 0 then
+			-- A thin lava seam at the foot of the columns (the only glow, no light source).
+			edgePart(parent, "LavaSeam", Vector3.new(3, 0.6, randRange(20, 34)), CFrame.new(side * (x0 + 4), 0.3, z), Color3.fromRGB(255, 120, 40), SM.Neon)
+		end
+		ridge(parent, "AshRidge", Vector3.new(side * (x0 + 110), 0, z + 15), 80, randRange(60, 80), 50, style.hill:Lerp(C.charcoal, 0.35), SM.Slate)
+	end,
+	Swamp = function(parent, side, z, x0, style, seg)
+		edgeBlob(parent, "MossBank", Vector3.new(randRange(50, 70), 22, randRange(60, 80)), CFrame.new(side * (x0 + 38), -6, z), style.hill:Lerp(C.leafDark, 0.3), SM.Grass)
+		edgeBlob(parent, "MossBackBank", Vector3.new(90, 76, 100), CFrame.new(side * (x0 + 95), -12, z + 20), style.hill:Lerp(C.charcoal, 0.2), SM.Grass)
+		-- Bare dead tree leaning out over the bank.
+		local tx = side * (x0 + 16 + rand() * 14)
+		local lean = CFrame.Angles(0, 0, side * math.rad(8 + rand() * 10))
+		local base = CFrame.new(tx, 0, z + randRange(-18, 18)) * lean
+		edgePart(parent, "DeadTrunk", Vector3.new(1.6, 16, 1.6), base * CFrame.new(0, 8, 0), C.woodDark, SM.Wood)
+		edgePart(parent, "DeadBranch", Vector3.new(1, 7, 1), base * CFrame.new(0, 12, 0) * CFrame.Angles(0, 0, math.rad(50)) * CFrame.new(0, 3, 0), C.woodDark, SM.Wood)
+		edgePart(parent, "DeadBranch", Vector3.new(0.9, 6, 0.9), base * CFrame.new(0, 10, 0) * CFrame.Angles(math.rad(-45), 0, math.rad(-35)) * CFrame.new(0, 3, 0), C.woodDark, SM.Wood)
+		if seg % 2 == 1 then
+			edgePart(parent, "BogPool", Vector3.new(0.3, 22, 22), CFrame.new(side * (x0 + 13), 0.15, z + 20) * CFrame.Angles(0, 0, math.pi / 2), Color3.fromRGB(92, 120, 70), SM.Glass, Enum.PartType.Cylinder)
+		end
+	end,
+	Nuclear = function(parent, side, z, x0, style, seg)
+		-- Terraced spoil heap: three flat layers, each smaller and darker.
+		local hx = side * (x0 + 42)
+		local y = 0
+		for k = 0, 2 do
+			local w = 66 - k * 17
+			local hgt = 15 - k * 3
+			edgePart(parent, "SpoilTerrace", Vector3.new(w, hgt, w * 1.1), CFrame.new(hx, y + hgt / 2, z), style.hill:Lerp(C.charcoal, k * 0.12), SM.Slate)
+			y += hgt
+		end
+		-- Concrete barrier with hazard stripes along the ground edge.
+		for k = 0, 3 do
+			edgePart(parent, "Barrier", Vector3.new(2, 3, 12), CFrame.new(side * (x0 + 4), 1.5, z - 24 + k * 14), if k % 2 == 0 then C.amber else C.charcoal, SM.Concrete)
+		end
+		if seg % 2 == 0 then
+			-- Lattice pylon: four legs and cross bars, a clear man-made skyline.
+			local px = side * (x0 + 100)
+			for _, o in { Vector3.new(-3, 0, -3), Vector3.new(3, 0, -3), Vector3.new(-3, 0, 3), Vector3.new(3, 0, 3) } do
+				edgePart(parent, "PylonLeg", Vector3.new(0.8, 48, 0.8), CFrame.new(px + o.X * 0.6, 24, z + o.Z * 0.6), C.stone, SM.DiamondPlate)
+			end
+			for k = 1, 4 do
+				edgePart(parent, "PylonBar", Vector3.new(14 - k, 0.6, 0.6), CFrame.new(px, k * 11, z), C.stone, SM.DiamondPlate)
+			end
+		end
+	end,
+}
+
+WorldBuilder.EdgeKinds = { "Meadow", "Dunes", "Tundra", "Volcano", "Swamp", "Nuclear" }
+
+local function buildBiomeEdges(biomesFolder: Instance)
+	local x0 = BiomeConfig.Width / 2
+	for _, biome in BiomeConfig.Biomes do
+		local style = Styles[biome.id] or Styles.Meadow
+		local bf = biomesFolder:FindFirstChild(biome.id) or biomesFolder
+		local edge = folder("Edge", bf)
+		local length = biome.endDistance - biome.startDistance
+		-- A ground apron under the edge so the terrain continues past the side walls.
+		for _, side in { -1, 1 } do
+			edgePart(edge, "EdgeApron", Vector3.new(160, 4, length), CFrame.new(side * (x0 + 80), -2.05, Z0 + biome.startDistance + length / 2), style.ground:Lerp(style.hill, 0.35), style.groundMat)
+		end
+		local fn = edges[biome.id] or edges.Meadow
+		local seg = 0
+		local z = Z0 + biome.startDistance + 35
+		while z < Z0 + biome.endDistance - 20 do
+			for _, side in { -1, 1 } do
+				fn(edge, side, z, x0, style, seg)
+			end
+			seg += 1
+			z += 70
+		end
+	end
+end
+
 local function buildBiomes(root: Instance)
 	local biomesFolder = folder("Biomes", root)
 	local width = BiomeConfig.Width
@@ -1409,7 +1569,8 @@ local function buildBiomes(root: Instance)
 		end
 	end
 
-	-- Landmarks, mountain backdrops beyond the side walls and clouds overhead.
+	-- Landmarks, biome-specific edge silhouettes beyond the side walls, clouds overhead.
+	buildBiomeEdges(biomesFolder)
 	local scenery = folder("Scenery", biomesFolder)
 	for _, biome in BiomeConfig.Biomes do
 		local style = Styles[biome.id] or Styles.Meadow
@@ -1418,14 +1579,7 @@ local function buildBiomes(root: Instance)
 		if landmark then
 			landmark(bf)
 		end
-		local z = Z0 + biome.startDistance + 30
-		while z < Z0 + biome.endDistance do
-			for _, side in { -1, 1 } do
-				local size = randRange(70, 130)
-				mountain(scenery, Vector3.new(side * (BiomeConfig.Width / 2 + size * 0.6 + rand() * 30), -size * 0.12, z + randRange(-15, 15)), size, randRange(70, 110), style.hill:Lerp(style.ground, rand() * 0.25), style.hillMat, if style.cap and size > 95 then style.cap else nil)
-			end
-			z += 75
-		end
+		local _ = style
 		for _ = 1, 3 do
 			cloud(scenery, Vector3.new(randRange(-170, 170), randRange(130, 190), Z0 + randRange(biome.startDistance, biome.endDistance)), randRange(0.9, 1.5))
 		end
