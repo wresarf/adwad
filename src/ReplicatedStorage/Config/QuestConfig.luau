@@ -34,7 +34,7 @@ QuestConfig.Quests = {
 	{ id = "Food4", title = "Gourmet", hint = "Own 4 snacks from the Food Shop", stat = "foods", target = 4, reward = 4000, focus = "Shop" },
 	{ id = "Volcano", title = "Hot Stuff", hint = "Throw 800m to reach the Magma Fields", stat = "distance", target = 800, reward = 8000, focus = "ThrowLine" },
 	{ id = "Epic1", title = "Epic Find", hint = "Catch an Epic or rarer pet", stat = "bestRarity", target = 4, reward = 10000, focus = "ThrowLine" },
-	{ id = "Swamp", title = "Toxic Toss", hint = "Throw 1,250m to reach the Toxic Swamp and unlock Auto-Throw", stat = "distance", target = 1250, reward = 25000, focus = "ThrowLine" },
+	{ id = "Swamp", title = "Toxic Toss", hint = "Throw 1,250m to reach the Toxic Swamp", stat = "distance", target = 1250, reward = 25000, focus = "ThrowLine" },
 	{ id = "Streak8", title = "Max Combo", hint = "Reach an 8-throw streak for 10x mutation odds", stat = "bestStreak", target = 8, reward = 40000, focus = "ThrowLine" },
 	{ id = "Nuclear", title = "Hazard Zone", hint = "Throw 1,800m to reach the Nuclear Wasteland", stat = "distance", target = 1800, reward = 80000, focus = "ThrowLine" },
 	{ id = "Space", title = "Lift Off", hint = "Throw 2,500m to leave the planet!", stat = "distance", target = 2500, reward = 150000, focus = "ThrowLine" },

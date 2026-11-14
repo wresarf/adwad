@@ -1429,6 +1429,7 @@ test("every former game pass is a free perk for every player, fresh or migrated"
 	local panels = SP.StarterPlayerScripts.Client.Panels.Source
 	ok(panels:find('"Included for everyone"', 1, true) and panels:find('"Included ✓"', 1, true), "store shows perks as included")
 	ok(not panels:find('"StorePurchase", "Pass"', 1, true), "store never asks to buy a pass")
+	ok(not panels:find("AutoThrowUnlockDistance", 1, true), "Auto-Throw setting is never shown locked")
 end)
 
 test("sound: only verified built-in client sounds, bounded voices, music off without an id", function()
@@ -1446,6 +1447,74 @@ test("sound: only verified built-in client sounds, bounded voices, music off wit
 	ok(clientSrc:find("sound:setEnabled(st.Sfx ~= false, st.Music ~= false)", 1, true), "settings drive the mixer")
 	for _, inst in game:GetDescendants() do
 		ok(not inst:IsA("Sound"), "no Sound instances baked into the place")
+	end
+end)
+
+print("\n[v6: pet list, quality, respawn, references]")
+test("pet list: group, filter, sort, compare and the upgrade dot", function()
+	local PetList = req(RS.Shared.PetList)
+	local function pet(species, material, equipped, locked)
+		return { uid = species .. material, species = species, material = material, size = "Normal", equipped = equipped, locked = locked == true }
+	end
+	local pets = {
+		pet("MeadowPup", "Normal", true),
+		pet("MeadowPup", "Normal", false),
+		pet("Bunbun", "Gold", false, true),
+		pet("CloverCat", "Normal", true),
+	}
+	local groups, byKey = PetList.group(pets)
+	eq(#groups, 3)
+	eq(byKey["MeadowPup|Normal|Normal"].count, 2)
+	eq(byKey["MeadowPup|Normal|Normal"].equipped, 1)
+	eq(byKey["Bunbun|Gold|Normal"].locked, true)
+	eq(byKey["MeadowPup|Normal|Normal"].locked, false)
+	eq(#PetList.view(groups, "On plot", "Income"), 2)
+	eq(#PetList.view(groups, "Backpack", "Income"), 2)
+	eq(#PetList.view(groups, "Mutated", "Income"), 1)
+	eq(#PetList.view(groups, "Locked", "Income"), 1)
+	eq(#PetList.view(groups, "All", "Income"), 3)
+	local byIncome = PetList.view(groups, "All", "Income")
+	ok(byIncome[1].income >= byIncome[2].income and byIncome[2].income >= byIncome[3].income, "income sort")
+	eq(PetList.view(groups, "All", "Newest")[1].key, "CloverCat|Normal|Normal", "newest first")
+	-- compare: with free slots everything is an improvement
+	local _, better = PetList.compare(byKey["Bunbun|Gold|Normal"], pets, 8)
+	ok(better, "free slot")
+	ok(PetList.upgradeAvailable(pets, 8))
+	-- full 2-slot plot: weakest is the pup; gold Bunbun out-earns it
+	local text, b2 = PetList.compare(byKey["Bunbun|Gold|Normal"], pets, 2)
+	ok(b2 and text:find("vs. weakest", 1, true), text)
+	ok(PetList.upgradeAvailable(pets, 2))
+	local onlyWorse = { pet("CloverCat", "Normal", true), pet("CloverCat", "Normal", true), pet("MeadowPup", "Normal", false) }
+	eq(PetList.upgradeAvailable(onlyWorse, 2), false, "no dot when nothing beats the plot")
+	local all = PetList.group({ pet("MeadowPup", "Normal", true) })
+	eq((PetList.compare(all[1], { pet("MeadowPup", "Normal", true) }, 8)), "All on your plot")
+	local panels = SP.StarterPlayerScripts.Client.Panels.Source
+	ok(panels:find("PetList.view(all, self.filter, self.sort)", 1, true), "panel uses the shared list logic")
+	ok(panels:find("No pets match", 1, true), "empty filter state")
+end)
+
+test("quality, respawn recovery and sound variation", function()
+	eq(RemoteContract.Settings.LowQuality, "boolean")
+	eq(PlayerData.defaults().settings.LowQuality, false)
+	eq(PlayerData.sanitize({ settings = { LowQuality = true } }).settings.LowQuality, true)
+	eq(PlayerData.sanitize({ version = 2 }).settings.LowQuality, false, "old saves default to full quality")
+	local fx = SP.StarterPlayerScripts.Client.Effects.Source
+	ok(fx:find("function Effects:applyQuality(low: boolean)", 1, true))
+	ok(fx:find("d.CastShadow = saved[d]", 1, true) and fx:find("d.Enabled = saved[d]", 1, true), "low quality is reversible")
+	ok(clientSrc:find("player.CharacterAdded:Connect(onCharacter)", 1, true), "respawn handler")
+	ok(clientSrc:find("camera.CameraType = Enum.CameraType.Custom", 1, true) and clientSrc:find("camera.CameraSubject = humanoid", 1, true), "camera restored on respawn")
+	ok(clientSrc:find("trainHeld = false", 1, true), "held Train released")
+	ok(SP.StarterPlayerScripts.Client.Sound.Source:find("0.97 + math.random() * 0.06", 1, true), "pitch variation")
+	ok(fx:find('if payload.newSpecies then "!"', 1, true), "catch emote")
+end)
+
+test("design references don't use the excluded video", function()
+	local fs = require("@lune/fs")
+	for _, path in { "docs/DESIGN_AUDIT.md", "docs/ART_AND_AUDIO.md", "docs/REFERENCES.md", "README.md" } do
+		if fs.isFile(path) then
+			local text = fs.readFile(path)
+			ok(not text:find("r157nlkQwz4", 1, true) and not text:find("youtu", 1, true), path .. " references the excluded video")
+		end
 	end
 end)
 

@@ -59,6 +59,7 @@ RemoteContract.Settings = {
 	GoldenTrail = "boolean",
 	Sfx = "boolean",
 	Music = "boolean",
+	LowQuality = "boolean",
 }
 
 return RemoteContract

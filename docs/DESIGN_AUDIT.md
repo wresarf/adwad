@@ -39,7 +39,6 @@ This document is for development only. Players get the single `SnackForce_PetTos
   - [Cube Pets](https://kenney.nl/assets/cube-pets): chunky rounded toy pets with big glossy eyes.
   - [UI Pack Adventure](https://kenney.nl/assets/ui-pack-adventure) and [UI Pack](https://kenney.nl/assets/ui-pack): cream panels and buttons with a darker bottom lip.
 - **Competitor:** [Throw Food For Animals](https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals). I read its public description and thumbnail only. Its loop is: throw food, attract animals, earn, buy better food, train.
-- **Competitor video:** [YouTube r157nlkQwz4](https://youtu.be/r157nlkQwz4). I could only verify the title ("…INFINITE SIZE MUTATION in THROW FOOD FOR ANIMALS"). I couldn't watch the footage, and nothing here claims it was reviewed or that this game is better.
 
 ## Monetization design
 
@@ -148,7 +147,7 @@ These were fetched in this session. Quotes went through a summariser, so check e
 - **Not found or blocked.** The performance-optimization pages gave no numeric part, particle or ViewportFrame budgets. `/docs/ui/mobile-input` returned 404, and the Community Standards help page returned 403.
 - **[Kenney Cube Pets](https://kenney.nl/assets/cube-pets) (CC0 preview images viewed; style reference only).** The head and body read as one bevelled block of about 1:1 on stubby legs, with big glossy wide-set eyes. Species are told apart by ears, tails and patches, with soft shading and no outlines. That supports keeping one shared face and using pose and add-ons for silhouette.
 - **[Kenney UI Pack](https://kenney.nl/assets/ui-pack) and [UI Pack Adventure](https://kenney.nl/assets/ui-pack-adventure).** A lighter button face over a darker 4–5 px lip, small corner radii, and parchment or wood panels. That matches the existing toy button.
-- **Competitors.** For [Throw Food For Animals](https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals) only the page text and thumbnail were available: a thick throw arc to a glowing landing ring, colour-coded ground zones, and a big creature labelled with its income. For the [YouTube video](https://youtu.be/r157nlkQwz4) only the title (via oEmbed) and the thumbnail were available, not the footage. Nothing here claims the video was watched or that this game is better than either.
+- **Competitors.** For [Throw Food For Animals](https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals) only the page text and thumbnail were available: a thick throw arc to a glowing landing ring, colour-coded ground zones, and a big creature labelled with its income.
 
 ### Still not done / not verified
 
@@ -156,6 +155,25 @@ These were fetched in this session. Quotes went through a summariser, so check e
 - **No audio.** Built-in `rbxasset://sounds` paths couldn't be verified offline, and nothing uses unverified ids.
 - **World unchanged.** World composition was not reworked in this pass beyond what v3 built.
 - **Purchases untested live.** Purchases still haven't been tested against live Roblox services, because all ids are 0.
+
+## v6 audit pass (2026-11-14)
+
+The fresh references and their takeaways are in [REFERENCES.md](REFERENCES.md). The earlier competitor video is no longer used. Every problem below was found in the source or in the offline renders.
+
+| Problem (evidence) | Player impact | Fix | Acceptance test |
+| --- | --- | --- | --- |
+| No `CharacterAdded` handler in GameClient. | Dying mid-charge left the meter charging and Train held. A respawn during a cutscene could leave the camera on the old Humanoid. | `onCharacter`: skip the cutscene, cancel the charge, release Train, then set `CameraType = Custom` and `CameraSubject` to the new Humanoid. | "quality, respawn recovery and sound variation" |
+| Help said "Auto-throw unlocks at 1250 m", the Swamp quest said "unlock Auto-Throw", and Settings could show "🔒 1250 m". | Wrong copy, because Auto-Throw is a free perk. | Copy fixed, and the lock branch removed. | "every former game pass is a free perk…" |
+| The Pets panel could only sort. You couldn't tell whether a pet beat your plot pets. | Extra clicks and guesswork. | Show filter (All, On plot, Backpack, Mutated, Locked), a Newest sort, a compare line in the sheet, and an amber dot on Pets when a backpack pet would earn more. | "pet list: group, filter, sort, compare and the upgrade dot" |
+| No effects quality option. | Older phones get every emitter, light and small-prop shadow. | Effects quality: Low, applied locally and reversible. | "quality, respawn…" |
+| After the last quest the card said "All quests complete". | No goal on screen. | Free-play goal: the next zone, Space, then the Moon. | Rendered HUD |
+| Every repeat of a cue had identical pitch. | Repetition fatigue (held Train, charge ticks). | ±3% pitch variation on every play. | "quality, respawn…" |
+| A catch showed only a label. | Weak reaction moment. | An emote bubble: ♥, ! (new species) or ★ (rare). | Source check |
+
+**Still open:**
+- **Not run in Roblox:** no Studio runtime and nothing heard.
+- **No music or ambience:** that needs an owned or permitted audio upload; see REFERENCES.md.
+- **World:** the hub and world structure were not rebuilt in this pass.
 
 ## Not verified (v3)
 

@@ -15,6 +15,7 @@ local EggConfig = require(Config:WaitForChild("EggConfig"))
 local MonetizationConfig = require(Config:WaitForChild("MonetizationConfig"))
 local UpgradeConfig = require(Config:WaitForChild("UpgradeConfig"))
 local GameMath = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameMath"))
+local PetList = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PetList"))
 local Progression = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Progression"))
 
 local UI = require(script.Parent:WaitForChild("UI"))
@@ -26,7 +27,7 @@ Panels.__index = Panels
 
 local AUTO_SELL_OPTIONS = { "Off", "Common", "Uncommon", "Rare", "Epic", "Legendary" }
 local AUTO_SKIP_OPTIONS = { "Off", "Uncommon", "Rare", "Epic", "Legendary", "Mythic", "Secret" }
-local SORTS = { "Income", "Rarity", "Count" }
+local SORTS = PetList.Sorts
 local MAX_VIEWPORTS = 30 -- pet cards beyond this show a colour swatch instead of a 3D preview
 
 local function cycle(list: { string }, current: string): string
@@ -116,6 +117,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	self.open = nil
 	self.state = nil
 	self.sort = "Income"
+	self.filter = "All"
 	self.storeDirty = true
 
 	local function close()
@@ -293,6 +295,12 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 			self:refreshPets(self.state)
 		end
 	end)
+	self.filterButton = barButton("Show: All", "ghost", 734, 132, function()
+		self.filter = cycle(PetList.Filters, self.filter)
+		if self.state then
+			self:refreshPets(self.state)
+		end
+	end)
 	UI.new("UIGridLayout", { CellSize = UDim2.fromOffset(170, 196), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder, Parent = pets.body })
 	self.petList = pets.body
 	self.petCountLabel = pets.subtitle
@@ -309,7 +317,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		BorderSizePixel = 0,
 		ScrollBarThickness = 4,
 		ScrollBarImageColor3 = C.Muted,
-		CanvasSize = UDim2.fromOffset(0, 370),
+		CanvasSize = UDim2.fromOffset(0, 392),
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 		Parent = pets.frame,
 	})
@@ -318,14 +326,14 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	UI.padding(sheet, 12)
 	self.sheet = sheet
 	self.sheetEmpty = UI.text(sheet, "Select a pet to see its details, place it on your plot, lock or sell it.", UDim2.new(1, 0, 0, 200), nil, { size = T.Body, color = C.Muted, font = UI.FontMedium, align = Enum.TextXAlignment.Center })
-	local sheetBody = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 346), Visible = false, Parent = sheet })
+	local sheetBody = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 368), Visible = false, Parent = sheet })
 	self.sheetBody = sheetBody
 	self.sheetView = UI.new("Frame", { BackgroundColor3 = C.Ivory, Size = UDim2.new(1, 0, 0, 110), Parent = sheetBody })
 	UI.corner(self.sheetView, UI.Radius.s)
 	self.sheetName = UI.text(sheetBody, "", UDim2.new(1, 0, 0, 26), UDim2.fromOffset(0, 116), { size = T.Label, font = UI.FontHeavy, wrap = false })
 	self.sheetTags = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 24), Position = UDim2.fromOffset(0, 144), Parent = sheetBody })
 	UI.list(self.sheetTags, 6, true)
-	self.sheetInfo = UI.text(sheetBody, "", UDim2.new(1, 0, 0, 40), UDim2.fromOffset(0, 172), { size = T.Small, color = C.Muted, font = UI.FontMedium, alignY = Enum.TextYAlignment.Top })
+	self.sheetInfo = UI.text(sheetBody, "", UDim2.new(1, 0, 0, 40), UDim2.fromOffset(0, 170), { size = T.Small, color = C.Muted, font = UI.FontMedium, alignY = Enum.TextYAlignment.Top })
 	local function sheetButton(y: number, style: string, fn: () -> ()): TextButton
 		local b = UI.button(sheetBody, "", style, UDim2.new(1, 0, 0, 40), UDim2.fromOffset(0, y), T.Body)
 		b.Activated:Connect(fn)
@@ -337,19 +345,21 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 			run("ManagePet", action, key)
 		end
 	end
-	self.sheetPlace = sheetButton(214, "primary", function()
+	-- Compare with the plot: the deciding number, right next to the action it informs.
+	self.sheetCompare = UI.text(sheetBody, "", UDim2.new(1, 0, 0, 20), UDim2.fromOffset(0, 210), { size = T.Small, color = C.LeafDark, wrap = false })
+	self.sheetPlace = sheetButton(236, "primary", function()
 		local g = self.selectedGroup
 		if g then
 			act(if g.equipped > 0 and g.equipped == g.count then "Unequip" else "Equip")
 		end
 	end)
-	self.sheetFuse = sheetButton(260, "reward", function()
+	self.sheetFuse = sheetButton(282, "reward", function()
 		local g = self.selectedGroup
 		if g and g.count >= 3 and not g.locked and MutationConfig.nextMaterial(g.rec.material) then
 			self.run("FusePets", g.key)
 		end
 	end)
-	self.sheetLock = UI.button(sheetBody, "", "secondary", UDim2.new(0.5, -4, 0, 40), UDim2.fromOffset(0, 306), T.Small)
+	self.sheetLock = UI.button(sheetBody, "", "secondary", UDim2.new(0.5, -4, 0, 40), UDim2.fromOffset(0, 328), T.Small)
 	self.sheetLock.Activated:Connect(function()
 		local g = self.selectedGroup
 		if g then
@@ -357,7 +367,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		end
 	end)
 	-- Selling asks twice: the first tap arms it, the second within 3 s sells one copy.
-	self.sheetSell = UI.button(sheetBody, "", "secondary", UDim2.new(0.5, -4, 0, 40), UDim2.new(0.5, 4, 0, 306), T.Small)
+	self.sheetSell = UI.button(sheetBody, "", "secondary", UDim2.new(0.5, -4, 0, 40), UDim2.new(0.5, 4, 0, 328), T.Small)
 	self.sheetSell.Activated:Connect(function()
 		local g = self.selectedGroup
 		if not g or g.locked then
@@ -430,6 +440,9 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	settingRow(8, "Music", "Music", "Plays only when a music track is set up.", function()
 		run("ToggleSetting", "Music", current("Music") == false)
 	end)
+	settingRow(10, "LowQuality", "Effects quality: Low", "Fewer particles, lights and shadows. Helps older phones.", function()
+		run("ToggleSetting", "LowQuality", current("LowQuality") ~= true)
+	end)
 	settingRow(9, "GoldenTrail", "Golden Trail", "A gold trail behind every snack. Free for everyone.", function()
 		run("ToggleSetting", "GoldenTrail", current("GoldenTrail") == false)
 	end)
@@ -448,7 +461,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		{ "Fusion and auto-sell", "Three identical pets fuse into the next material. Auto-sell turns low-rarity catches into coins. Mutations are protected by default." },
 		{ "Weather", string.format("Every %d s a %d s event starts: Titan Storm (3x size luck), Feast Frenzy (2x craving bonus), Prism Aurora (4x material luck). Cravings change each time.", GameConfig.WeatherInterval, GameConfig.WeatherDuration) },
 		{ "Safari Eggs", "Spend earned Paw Tokens at the Hatchery for pets you can't catch. Every egg lists its exact odds." },
-		{ "Progress", string.format("Quests guide you and pay coins plus a Paw Token. Your plot keeps earning %d%% while you're away (up to %d h). Auto-throw unlocks at %d m.", math.floor(GameConfig.OfflineRate * 100), GameConfig.OfflineMaxSeconds // 3600, GameConfig.AutoThrowUnlockDistance) },
+		{ "Progress", string.format("Quests guide you and pay coins plus a Paw Token. Your plot keeps earning %d%% while you're away (up to %d h). Auto-throw is free from the start (Settings).", math.floor(GameConfig.OfflineRate * 100), GameConfig.OfflineMaxSeconds // 3600) },
 	}
 	for i, sec in sections do
 		local r = UI.surface(help.body, UDim2.new(1, 0, 0, 0), nil, C.Paper, UI.Radius.m)
@@ -616,12 +629,8 @@ function Panels:refresh(state: any, full: boolean?)
 			UI.setButton(b, if v then "On" else "Off", if v then "primary" else "secondary")
 		end
 	end
-	if state.autoThrowUnlocked then
-		onOff("AutoThrow", s.AutoThrow == true)
-	else
-		UI.setButton(self.settingButtons.AutoThrow, string.format("🔒 %d m", GameConfig.AutoThrowUnlockDistance), "disabled")
-		self.settingButtons.AutoThrow.Active = true
-	end
+	-- Auto-Throw is a free built-in perk: always switchable, never locked.
+	onOff("AutoThrow", s.AutoThrow == true)
 	onOff("ReduceMotion", s.ReduceMotion == true)
 	onOff("ShowCutscenes", s.ShowCutscenes ~= false)
 	onOff("KeepMutated", s.KeepMutated ~= false)
@@ -629,6 +638,7 @@ function Panels:refresh(state: any, full: boolean?)
 	onOff("Sfx", s.Sfx ~= false)
 	onOff("Music", s.Music ~= false)
 	onOff("GoldenTrail", s.GoldenTrail ~= false)
+	onOff("LowQuality", s.LowQuality == true)
 	UI.setButton(self.settingButtons.AutoSkipRarity, s.AutoSkipRarity or "Off", "secondary")
 	UI.setButton(self.autoSellButton, "Auto-sell: " .. (s.AutoSellRarity or "Off"))
 
@@ -660,46 +670,13 @@ function Panels:refreshPets(state: any)
 	self.petsDirty = false
 	UI.setButton(self.sortButton, "Sort: " .. self.sort)
 	clearList(self.petList)
-	local groups: { [string]: any } = {}
-	local order = {}
+	local all, groups = PetList.group(state.pets or {})
 	local equippedCount = 0
-	for _, p in state.pets or {} do
-		local key = GameMath.fuseKey(p)
-		local g = groups[key]
-		if not g then
-			local _, rIdx = GameMath.overallRarity(p)
-			g = { key = key, rec = p, count = 0, equipped = 0, income = GameMath.petIncome(p), rarityIndex = rIdx }
-			groups[key] = g
-			table.insert(order, g)
-		end
-		g.count += 1
-		if p.equipped then
-			g.equipped += 1
-			equippedCount += 1
-		end
+	for _, g in all do
+		equippedCount += g.equipped
 	end
-	for _, g in order do
-		local all = true
-		for _, p in state.pets or {} do
-			if GameMath.fuseKey(p) == g.key and not p.locked then
-				all = false
-				break
-			end
-		end
-		g.locked = all
-	end
-	local sort = self.sort
-	table.sort(order, function(a, b)
-		if sort == "Rarity" and a.rarityIndex ~= b.rarityIndex then
-			return a.rarityIndex > b.rarityIndex
-		elseif sort == "Count" and a.count ~= b.count then
-			return a.count > b.count
-		end
-		if a.income ~= b.income then
-			return a.income > b.income
-		end
-		return a.key < b.key
-	end)
+	local order = PetList.view(all, self.filter, self.sort)
+	UI.setButton(self.filterButton, "Show: " .. self.filter)
 	self.petCountLabel.Text = string.format("%d / %d in backpack · %d / %d on your plot", #(state.pets or {}), state.maxPets or GameConfig.MaxPets, equippedCount, state.slots or GameConfig.PlotPedestals)
 
 	self.petCards = {}
@@ -713,7 +690,8 @@ function Panels:refreshPets(state: any)
 	self:renderSheet()
 
 	if #order == 0 then
-		local empty = UI.text(self.petList, "No pets yet. Throw a snack at the Throw Line to meet your first one.", UDim2.fromOffset(520, 60), nil, { size = T.Body, color = C.Muted })
+		local msg = if #all == 0 then "No pets yet. Throw a snack at the Throw Line to meet your first one." else "No pets match \"" .. self.filter .. "\". Tap Show to change the filter."
+		local empty = UI.text(self.petList, msg, UDim2.fromOffset(520, 60), nil, { size = T.Body, color = C.Muted })
 		empty.LayoutOrder = 1
 		return
 	end
@@ -832,6 +810,10 @@ function Panels:renderSheet()
 		UI.tag(self.sheetTags, "🔒 Locked", C.Ivory, C.Charcoal, nil, 3)
 	end
 	self.sheetInfo.Text = string.format("+%s/s each · %d on plot\nSells for %s", GameMath.formatNumber(g.income), g.equipped, GameMath.formatNumber(GameMath.sellValue(rec)))
+	local st: any = self.state or {}
+	local cmp, better = PetList.compare(g, st.pets or {}, st.slots)
+	self.sheetCompare.Text = (if better then "▲ " else "") .. cmp
+	self.sheetCompare.TextColor3 = if better then C.LeafDark else C.Muted
 	local allOut = g.equipped > 0 and g.equipped == g.count
 	UI.setButton(self.sheetPlace, if allOut then "Back to backpack" else "Place on plot", if allOut then "secondary" else "primary")
 	local nextMat = MutationConfig.nextMaterial(rec.material)

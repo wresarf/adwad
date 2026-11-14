@@ -554,7 +554,7 @@ function Gui.sampleState(game)
 		pets = pets,
 		discovered = { MeadowPup = true, Bunbun = true, Honeybear = true, CloverCat = true, Sandpup = true, CactiFrog = true, SunDrake = true, ZebraFoal = true },
 		settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, ReduceMotion = false, AutoSellRarity = "Common" },
-		autoThrowUnlocked = false,
+		autoThrowUnlocked = true,
 		quest = { id = "Dunes", index = 9, total = 23, title = "Desert Run", hint = "Throw 300 m to reach Sizzle Dunes", progress = 240, target = 300, reward = 2500, focus = "ThrowLine" },
 		questsDone = 8,
 		totalThrows = 60,

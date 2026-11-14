@@ -154,4 +154,3 @@ There are no pass ids, no prompts and no ownership checks. Gem developer product
   - [UI Pack](https://kenney.nl/assets/ui-pack)
   - [UI Pack Adventure](https://kenney.nl/assets/ui-pack-adventure)
 - **Competitor:** [Throw Food For Animals](https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals). I had only its page text and thumbnail: a throw arc to a glowing landing ring and colour-coded zones.
-- **Competitor video:** [YouTube r157nlkQwz4](https://youtu.be/r157nlkQwz4). I had only the title and thumbnail; the footage was not watched. No claim of superiority is made.

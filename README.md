@@ -53,7 +53,7 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 - **Cravings:** every biome craves Berry, Meat, Spicy or Cosmic, and the cravings re-roll with each weather event. Landing the matching food builds a streak, with combo multipliers 1.5 → 2 → 3 → 4 → 5 → 6.5 → 8 → **10×** mutation odds. A miss resets the streak.
 - **Mutations:** materials are Normal / Gold / Diamond / Emerald / Ruby / Rainbow. Sizes are Normal / Huge / Colossal / Monstrous / Titanic / Cosmic / Infinite.
 - **Fusion:** three identical pets (same species, material and size) fuse into the next material tier. *Fuse All* cascades, and a reveal shows the result.
-- **Pets panel:** tap a pet to select it. You can place it on your plot or move it back to your backpack, **lock** it (locked pets are never sold or fused), or sell one copy (tap twice to confirm).
+- **Pets panel:** filter with Show (All, On plot, Backpack, Mutated, Locked) and sort by Income, Rarity, Count or Newest. Tap a pet to select it: the sheet shows how it compares with your weakest plot pet. You can place it on your plot or move it back to your backpack, **lock** it (locked pets are never sold or fused), or sell one copy (tap twice to confirm).
 - **Upgrades** (Snack Shop → Upgrades, coins only):
   - Training Coach: +25% training per level.
   - Craving Chef: +50% craving coins per level.

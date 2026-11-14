@@ -17,6 +17,7 @@ local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
 local EggConfig = require(Config:WaitForChild("EggConfig"))
 local GameMath = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameMath"))
+local PetList = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PetList"))
 
 local UI = require(script.Parent:WaitForChild("UI"))
 local Panels = require(script.Parent:WaitForChild("Panels"))
@@ -688,6 +689,10 @@ function Hud:refreshBadges(state: any)
 	end
 	self.navButtons.Shop.Badge.Visible = snack
 	self.navButtons.Eggs.Badge.Visible = egg
+	-- A pet in the backpack would earn more on the plot: one tap on Equip best fixes it.
+	if state.pets then
+		self.navButtons.Pets.Badge.Visible = PetList.upgradeAvailable(state.pets, state.slots or GameConfig.PlotPedestals)
+	end
 end
 
 function Hud:refreshQuest(q: any, loaded: boolean)
@@ -701,13 +706,34 @@ function Hud:refreshQuest(q: any, loaded: boolean)
 		return
 	end
 	if type(q) ~= "table" then
-		self.questHeader.Text = "All quests complete"
-		self.questTitle.Text = "Snack Force legend"
-		self.questHint.Text = "Chase Rainbow and Infinite pets on the Moon."
+		-- After the quest line: keep a goal on screen instead of a dead end.
+		local best = self.bestDistance or 0
+		local target, name = nil, nil
+		for _, b in BiomeConfig.Biomes do
+			if b.startDistance > best then
+				target, name = b.startDistance, b.name
+				break
+			end
+		end
+		if not target and best < BiomeConfig.SpaceDistance then
+			target, name = BiomeConfig.SpaceDistance, "Space"
+		elseif not target and best < BiomeConfig.MoonDistance then
+			target, name = BiomeConfig.MoonDistance, "the Moon"
+		end
+		self.questHeader.Text = "Free play"
 		self.questReward.Visible = false
-		UI.setProgress(self.questFill, 1)
-		self.questBarText.Text = "Done"
 		self.questFocus = nil
+		if target and name then
+			self.questTitle.Text = "Next: " .. name
+			self.questHint.Text = string.format("Throw %s m to reach %s.", GameMath.formatNumber(target), name)
+			UI.setProgress(self.questFill, best / target)
+			self.questBarText.Text = string.format("%s / %s m", GameMath.formatNumber(best), GameMath.formatNumber(target))
+		else
+			self.questTitle.Text = "Moon champion"
+			self.questHint.Text = "Fuse up to Rainbow and hunt Infinite sizes."
+			UI.setProgress(self.questFill, 1)
+			self.questBarText.Text = "All zones"
+		end
 		return
 	end
 	self.questHeader.Text = string.format("Quest %d of %d", q.index or 1, q.total or 1)

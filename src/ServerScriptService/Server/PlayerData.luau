@@ -23,6 +23,7 @@ export type Settings = {
 	GoldenTrail: boolean, -- cosmetic free perk, on by default
 	Sfx: boolean, -- sound effects
 	Music: boolean, -- music / ambience (only plays when an audio id is configured)
+	LowQuality: boolean, -- fewer particles, lights and small-prop shadows
 	AutoSellRarity: string, -- rarity name or "Off"
 }
 
@@ -97,6 +98,7 @@ function PlayerData.defaults(): Data
 			GoldenTrail = true,
 			Sfx = true,
 			Music = true,
+			LowQuality = false,
 			AutoSellRarity = "Off",
 		},
 		stats = {
@@ -218,7 +220,7 @@ function PlayerData.sanitize(raw: any): Data
 
 	local s = raw.settings
 	if type(s) == "table" then
-		-- Kept as saved: whether Auto-Throw may actually run (distance unlock or pass) is
+		-- Kept as saved: whether Auto-Throw may run (now a free perk for everyone) is
 		-- checked by the server every time.
 		if type(s.AutoThrow) == "boolean" then
 			d.settings.AutoThrow = s.AutoThrow
@@ -226,7 +228,7 @@ function PlayerData.sanitize(raw: any): Data
 		if type(s.ReduceMotion) == "boolean" then
 			d.settings.ReduceMotion = s.ReduceMotion
 		end
-		for _, key in { "GoldenTrail", "Sfx", "Music" } do
+		for _, key in { "GoldenTrail", "Sfx", "Music", "LowQuality" } do
 			if type(s[key]) == "boolean" then
 				(d.settings :: any)[key] = s[key]
 			end

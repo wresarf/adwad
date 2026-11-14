@@ -127,7 +127,8 @@ function Sound.play(self: Player, name: string, at: Vector3?, pitch: number?)
 			s.Name = name
 			s.SoundId = SoundConfig.path(cue.file)
 			s.Volume = cue.volume * (note.volume or 1)
-			s.PlaybackSpeed = note.speed * (pitch or 1)
+			-- ±3% random pitch so repeated cues (training, ticks) don't sound mechanical.
+			s.PlaybackSpeed = note.speed * (pitch or 1) * (0.97 + math.random() * 0.06)
 			s.SoundGroup = self.sfx
 			local at3 = anchor
 			if at3 then

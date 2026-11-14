@@ -50,8 +50,8 @@ local state: { [string]: any } = {
 	ownedFoods = { [FoodConfig.DefaultFood] = true },
 	pets = {},
 	discovered = {},
-	settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, ReduceMotion = false, AutoSellRarity = "Off", GoldenTrail = true, Sfx = true, Music = true },
-	autoThrowUnlocked = false,
+	settings = { AutoThrow = false, AutoSkipRarity = "Epic", KeepMutated = true, ShowCutscenes = true, ShowGuide = true, ReduceMotion = false, AutoSellRarity = "Off", GoldenTrail = true, Sfx = true, Music = true, LowQuality = false },
+	autoThrowUnlocked = true, -- free perk for everyone
 	quest = nil,
 	questsDone = 0,
 	totalThrows = 0,
@@ -469,6 +469,7 @@ table.insert(connections, StateSync.OnClientEvent:Connect(function(incoming: any
 	hud:update(state)
 	local st = state.settings or {}
 	sound:setEnabled(st.Sfx ~= false, st.Music ~= false)
+	fx:applyQuality(st.LowQuality == true)
 	fx:setBestDistance(state.bestDistance or 0)
 end))
 
@@ -524,6 +525,29 @@ table.insert(connections, WeatherEvent.OnClientEvent:Connect(function(w: any)
 		hud:toast("Weather cleared · cravings changed", UI.Colors.Teal)
 	end
 end))
+
+-- Respawn recovery: a death mid-charge or mid-cutscene must never leave the camera on
+-- Scriptable, the meter charging or Train held. The camera goes back to Custom on the
+-- new Humanoid (CameraSubject can't be nil, so wait for it).
+local function onCharacter(character: Model)
+	if fx:isPlaying() then
+		fx:skip()
+	end
+	if charging then
+		charging = false
+		throwInput = nil
+		fx:setCharging(nil)
+	end
+	trainHeld = false
+	trainInput = nil
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	local camera = Workspace.CurrentCamera
+	if camera and humanoid and humanoid:IsA("Humanoid") then
+		camera.CameraType = Enum.CameraType.Custom
+		camera.CameraSubject = humanoid
+	end
+end
+table.insert(connections, player.CharacterAdded:Connect(onCharacter))
 
 -- Clean up if this script is ever removed (e.g. during testing).
 script.Destroying:Connect(function()

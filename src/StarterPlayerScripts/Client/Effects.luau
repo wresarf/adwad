@@ -332,7 +332,49 @@ function Effects:_burst(position: Vector3, size: Vector3, count: number, life: n
 end
 
 function Effects:_count(n: number): number
-	return if self:_reduced() then math.min(n, math.max(2, math.floor(n * 0.25))) else n
+	if self:_reduced() then
+		return math.min(n, math.max(2, math.floor(n * 0.25)))
+	end
+	return if self.lowQuality then math.max(2, math.floor(n * 0.4)) else n
+end
+
+-- Effects quality. Low: fewer burst particles, world emitters and lights off, no
+-- shadows from small props. Applied locally to the replicated world and reversible.
+function Effects:applyQuality(low: boolean)
+	if self.lowQuality == low then
+		return
+	end
+	self.lowQuality = low
+	local world = Workspace:FindFirstChild("SnackWorld")
+	if not world then
+		return
+	end
+	local saved: { [Instance]: any } = self.qualitySaved or {}
+	self.qualitySaved = saved
+	for _, d in world:GetDescendants() do
+		if d:IsA("ParticleEmitter") or d:IsA("PointLight") or d:IsA("SpotLight") then
+			if low then
+				if saved[d] == nil then
+					saved[d] = d.Enabled
+				end
+				d.Enabled = false
+			elseif saved[d] ~= nil then
+				d.Enabled = saved[d]
+			end
+		elseif d:IsA("BasePart") and math.max(d.Size.X, d.Size.Y, d.Size.Z) < 8 then
+			if low then
+				if saved[d] == nil then
+					saved[d] = d.CastShadow
+				end
+				d.CastShadow = false
+			elseif saved[d] ~= nil then
+				d.CastShadow = saved[d]
+			end
+		end
+	end
+	if not low then
+		table.clear(saved)
+	end
 end
 
 ------------------------------------------------------------------ sequences
@@ -652,6 +694,41 @@ function Effects:_spawnCaughtPet(payload: any, ground: Vector3, parent: Instance
 		local text = (if payload.rarity then tostring(payload.rarity) .. " " else "") .. petTitle(rec)
 		local g = label(primary, UDim2.fromOffset(240, 36), Vector3.new(0, height + 0.5, 0), text, rarityColor(payload.rarity):Lerp(Palette.Ivory, 0.15))
 		gui = g
+		-- A small emote bubble says how the pet feels: ♥ caught, ! new species, ★ rare.
+		local emote = if payload.newSpecies then "!" elseif (payload.rarityIndex or 1) >= 4 then "★" else "♥"
+		local bubble = Instance.new("BillboardGui")
+		bubble.Name = "Emote"
+		bubble.Size = UDim2.fromOffset(44, 44)
+		bubble.StudsOffset = Vector3.new(0, height + 3.2, 0)
+		bubble.AlwaysOnTop = true
+		bubble.LightInfluence = 0
+		bubble.Parent = primary
+		local face = Instance.new("TextLabel")
+		face.Size = UDim2.fromScale(1, 1)
+		face.BackgroundColor3 = Palette.Ivory
+		face.Text = emote
+		face.TextSize = 26
+		face.Font = Enum.Font.BuilderSansExtraBold
+		face.TextColor3 = if emote == "♥" then Palette.Terracotta elseif emote == "★" then Palette.Amber else Palette.Charcoal
+		face.Parent = bubble
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(1, 0)
+		corner.Parent = face
+		bubble.Enabled = false
+		task.delay(0.45, function()
+			if bubble.Parent then
+				bubble.Enabled = true
+				tween(face, 0.2, { Size = UDim2.fromScale(1, 1) })
+				task.delay(1.4, function()
+					if bubble.Parent then
+						tween(face, 0.3, { BackgroundTransparency = 1, TextTransparency = 1 })
+						task.delay(0.35, function()
+							bubble:Destroy()
+						end)
+					end
+				end)
+			end
+		end)
 	end
 	local base = model:GetPivot()
 	local rig = partRig(model)
