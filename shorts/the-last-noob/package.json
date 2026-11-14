@@ -1,0 +1,29 @@
+{
+  "name": "the-last-noob",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The Last Noob: They Left the Noob Outside. Original vertical survival-mystery short (Remotion + three.js).",
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "stills": "node scripts/stills.mjs",
+    "render": "remotion render src/index.ts LastNoob out/video_silent.mp4 --codec h264 --crf 18 --gl=swangle --concurrency=1"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.8.2",
+    "@remotion/bundler": "^4.0.543",
+    "@remotion/cli": "^4.0.543",
+    "@remotion/renderer": "^4.0.543",
+    "@remotion/three": "^4.0.543",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "remotion": "^4.0.543",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/three": "^0.170.0",
+    "typescript": "^7.0.2"
+  }
+}

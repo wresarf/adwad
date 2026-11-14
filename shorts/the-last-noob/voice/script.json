@@ -1,0 +1,23 @@
+{
+  "title": "The Last Noob: They Left the Noob Outside",
+  "voice": "piper en_US-joe-medium (CC0 dataset)",
+  "lines": [
+    {"id": "hook1", "text": "They locked him outside.", "gap": 0.35},
+    {"id": "hook2", "text": "Then something knocked from inside.", "gap": 0.55},
+    {"id": "night", "text": "Night one on the Pinewood server. The pros built a cabin, and voted the new guy out.", "gap": 0.2},
+    {"id": "nonoobs", "text": "No noobs. You'll get us caught.", "gap": 0.3, "speaker": "pro"},
+    {"id": "gate", "text": "So Noob waits by the gate, with nothing but a starter lantern.", "gap": 0.3},
+    {"id": "creak", "text": "Then the trees start to creak. Something huge walks out of the fog.", "gap": 0.25},
+    {"id": "window", "text": "Everyone inside presses against the window to watch it.", "gap": 0.3},
+    {"id": "wait", "text": "But wait. The moon is right behind it, and it casts no shadow.", "gap": 0.35},
+    {"id": "wall", "text": "Noob looks back at the cabin. On the wall, one player's shadow is moving on its own.", "gap": 0.3},
+    {"id": "yousee", "text": "You see, the thing outside was never the hunter. It was bait, to keep everyone staring out the window.", "gap": 0.2},
+    {"id": "fire", "text": "The real one was already sitting by the fire.", "gap": 0.4},
+    {"id": "lantern", "text": "Noob doesn't run. He lifts his lantern and flashes it through the glass.", "gap": 0.2},
+    {"id": "reveal", "text": "The light hits the fake player, and its disguise flickers away.", "gap": 0.25},
+    {"id": "door", "text": "Noob kicks open the back door. Everybody out!", "gap": 0.25},
+    {"id": "escape", "text": "They sprint through the gate, as the shadow melts in the sunrise.", "gap": 0.4},
+    {"id": "welcome", "text": "Welcome to the team, Noob.", "gap": 0.45, "speaker": "pro"},
+    {"id": "twist", "text": "He smiles. But on the grass behind him, there are two shadows.", "gap": 0.0}
+  ]
+}
