@@ -1865,6 +1865,140 @@ test("screenshot audit: every supplied reference analysed, honest evidence label
 	ok(not text:find("r157nlkQwz4", 1, true) and not text:find("youtu", 1, true), "excluded video absent")
 end)
 
+print("\n[v8: hub composition]")
+local function footprint(part, pos, pad)
+	local lp = part.CFrame:PointToObjectSpace(pos)
+	local s = part.Size
+	if part:IsA("Part") and part.Shape == R.Enum.PartType.Cylinder then
+		-- Vertical columns lie on X; their footprint is a circle of diameter Size.Y.
+		return math.sqrt(lp.Y * lp.Y + lp.Z * lp.Z) <= s.Y / 2 + pad
+	end
+	return math.abs(lp.X) <= s.X / 2 + pad and math.abs(lp.Z) <= s.Z / 2 + pad
+end
+local function hubPaths(root)
+	local list = {}
+	for _, p in root.SpawnHub.Paths:GetChildren() do
+		table.insert(list, p)
+	end
+	return list
+end
+test("hub: landscaping and gateways never block a path", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local land = root.SpawnHub:FindFirstChild("HubLandscape")
+	ok(land, "landscape folder")
+	local paths = hubPaths(root)
+	local checked = 0
+	for _, d in land:GetDescendants() do
+		if d:IsA("BasePart") and d.CanCollide and not d.Name:find("Forecourt", 1, true) then
+			local bottom = d.CFrame.Position.Y - d.Size.Y / 2
+			if bottom < 8 then
+				for _, p in paths do
+					ok(not footprint(p, d.CFrame.Position, -0.2), d:GetFullName() .. " stands on " .. p.Name)
+				end
+				checked += 1
+			end
+		end
+	end
+	ok(checked > 20, "checked " .. checked .. " ground-level landscape parts")
+	-- Each gateway leaves a clear opening at least as wide as its path and 12 studs high.
+	for _, name in { "ThrowLineGate", "WestPlotsGate", "EastPlotsGate" } do
+		local g = land:FindFirstChild(name)
+		ok(g, name)
+		local posts = {}
+		for _, d in g:GetChildren() do
+			if d.Name == "ArchPost" then
+				table.insert(posts, d.CFrame.Position)
+			end
+			if d.Name == "ArchBeam" or d.Name == "ArchSign" or d.Name == "Pennant" then
+				ok(d.CFrame.Position.Y - d.Size.Magnitude / 2 > 9 or not d.CanCollide, name .. " " .. d.Name .. " hangs too low")
+				ok(not d.CanCollide, name .. " overhead parts don't collide")
+			end
+		end
+		eq(#posts, 2, name .. " posts")
+		local gap = (posts[1] - posts[2]).Magnitude - 2.2
+		ok(gap >= 14, name .. " opening only " .. gap)
+	end
+end)
+
+test("hub: spawn on open ground facing the Throw Line, every stall reachable by path", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local spawn = root.SpawnHub.HubSpawn
+	ok(spawn.CFrame.LookVector.Z > 0.99, "spawn faces down the avenue to the Throw Line")
+	ok(footprint(root.SpawnHub.HubGround, spawn.CFrame.Position, 0), "spawn on hub ground")
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") and d.CanCollide and d ~= spawn and d.Size.Magnitude < 60 then
+			local p = d.CFrame.Position
+			local flat = R.Vector3.new(p.X - spawn.CFrame.Position.X, 0, p.Z - spawn.CFrame.Position.Z).Magnitude
+			ok(not (flat < 7 and p.Y > 0.6 and p.Y < 8), "spawn crowded by " .. d:GetFullName())
+		end
+	end
+	-- Straight sightline: nothing tall and collidable on the avenue between spawn and the pad.
+	for _, d in root.SpawnHub:GetDescendants() do
+		if d:IsA("BasePart") and d.CanCollide then
+			local p = d.CFrame.Position
+			if math.abs(p.X) < 7 and p.Z > -110 and p.Z < -34 then
+				ok(d.CFrame.Position.Y + d.Size.Y / 2 < 1, "avenue blocked by " .. d:GetFullName())
+			end
+		end
+	end
+	local paths = hubPaths(root)
+	local walkable = {}
+	for _, p in paths do
+		table.insert(walkable, p)
+	end
+	for _, n in { "Plaza", "HubSpawn" } do
+		table.insert(walkable, root.SpawnHub:FindFirstChild(n))
+	end
+	for _, d in root.SpawnHub.HubLandscape:GetChildren() do
+		if d.Name:find("Forecourt", 1, true) then
+			table.insert(walkable, d)
+		end
+	end
+	local function onWalk(pos, pad)
+		for _, w in walkable do
+			if footprint(w, pos, pad) then
+				return true
+			end
+		end
+		return false
+	end
+	local prompts = 0
+	for _, d in root:GetDescendants() do
+		if d:IsA("ProximityPrompt") then
+			prompts += 1
+			local at = d.Parent.CFrame.Position
+			ok(onWalk(at, d.MaxActivationDistance + 4), d.Parent:GetFullName() .. " isn't reachable from a path")
+		end
+	end
+	ok(prompts >= 4, "stall prompts")
+	for _, plot in root.Plots:GetChildren() do
+		local gate = plot:FindFirstChild("GatePost")
+		ok(gate and onWalk(gate.CFrame.Position, 14), plot.Name .. " gate off the promenade")
+	end
+	local gym = GameConfig.GymCenter
+	ok(onWalk(gym + R.Vector3.new(30, 0, 0), 4), "gym entrance on a path")
+end)
+
+test("world budgets: parts, lights and emitters bounded; low quality covers the new lights", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local parts, lights, emitters = 0, 0, 0
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") then
+			parts += 1
+		elseif d:IsA("PointLight") or d:IsA("SpotLight") then
+			lights += 1
+		elseif d:IsA("ParticleEmitter") then
+			emitters += 1
+		end
+	end
+	ok(parts < 6000, "part budget: " .. parts)
+	ok(lights <= 60, "light budget: " .. lights)
+	ok(emitters <= 40, "emitter budget: " .. emitters)
+	print(string.format("        (%d parts, %d lights, %d emitters)", parts, lights, emitters))
+	local fx = SP.StarterPlayerScripts.Client.Effects.Source
+	ok(fx:find('local world = Workspace:FindFirstChild("SnackWorld")', 1, true) and fx:find('d:IsA("PointLight")', 1, true), "Low quality walks every SnackWorld light")
+end)
+
 print(string.format("\n%d passed, %d failed", passed, failed))
 if failed > 0 then
 	process.exit(1)

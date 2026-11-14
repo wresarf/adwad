@@ -254,9 +254,38 @@ The docs I fetched don't spell out two behaviours, so these remain assumptions u
 - that moving the anchored core by CFrame carries the welded details with it;
 - that the Animator only writes `Transform`.
 
+## v8: hub composition (follow-up to section 4)
+
+The random hub tree scatter is replaced by a designed layout (`WorldBuilder.buildHubLandscape`):
+
+- **Throw Line gateway:** an arch across the avenue at z = −70 that frames the straight
+  view from the spawn to the lane.
+- **Pet Plots gateways:** one arch on each side, where the cross path meets the plot
+  promenades.
+- **Stall forecourts:** paved areas in front of the snack shop and the hatchery.
+- **Cross boulevard:** 16 trees in pits along the cross path.
+- **Hedges:** along the hub side of both promenades, with a gap at every crossing.
+- **Groves:** four groves, each with a bench, filling the empty quadrants.
+
+These stay as they were: plot positions and spacing, the gym (`GymCenter`), the stalls,
+the lane, and every progression distance.
+
+**Evidence:** top-down maps and a spawn-view render from the built place file. They are
+approximate renders, not Roblox screenshots.
+
+**Tests:**
+- "hub: landscaping and gateways never block a path";
+- "hub: spawn on open ground facing the Throw Line, every stall reachable by path";
+- "world budgets" (3,106 parts, 31 lights, 22 emitters).
+
+**Audio:** none of the verified built-in client sounds is an ambience loop, so ambience
+and music stay off until the owner sets an uploaded asset id they have permission to use.
+
 ## What is still open
 
-- Nothing in this pass has been played or heard in Roblox Studio.
+- Nothing in this pass has been played or heard in Roblox Studio. Studio can't run in this
+  environment.
 - Music and ambience still need audio the owner uploads and has permission to use.
 - Gem pack IDs are still unset.
-- The hub layout was kept rather than rebuilt.
+- The biomes' terrain silhouettes were not reworked beyond the v5 and v7 boundary
+  markers.

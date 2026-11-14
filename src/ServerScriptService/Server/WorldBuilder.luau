@@ -412,6 +412,89 @@ local function path(parent: Instance, name: string, a: Vector3, b: Vector3, w: n
 	span(parent, name, a + Vector3.new(0, 0.15, 0), b + Vector3.new(0, 0.15, 0), w, 0.3, C.sand, SM.Sand)
 end
 
+-- Archway over a path: two posts outside the path edges, a beam well above head height
+-- and a sign facing `facing`. `across` is the unit direction from one post to the other.
+local function gateway(parent: Instance, name: string, center: Vector3, across: Vector3, gap: number, facing: Vector3, text: string, accent: Color3)
+	local g = folder(name, parent)
+	local up = Vector3.new(0, 1, 0)
+	for _, sx in { -1, 1 } do
+		local base = center + across * sx * (gap / 2 + 1.4)
+		column(g, "ArchPlinth", base, 1.6, 3.6, C.cream:Lerp(C.sand, 0.4), SM.Slate, true)
+		block(g, "ArchPost", Vector3.new(2.2, 15, 2.2), CFrame.new(base + Vector3.new(0, 9, 0)), C.woodDark, SM.Wood, true)
+		blob(g, "ArchCap", Vector3.new(3, 2.2, 3), CFrame.new(base + Vector3.new(0, 17.4, 0)), accent)
+		local lantern = block(g, "ArchLantern", Vector3.new(1, 1.4, 1), CFrame.new(base + facing * 1.6 + Vector3.new(0, 11, 0)), C.amber, nil, false)
+		light(lantern, rgb(255, 214, 150), 18, 0.7)
+	end
+	local beamCF = CFrame.fromMatrix(center + Vector3.new(0, 15.6, 0), across, up)
+	block(g, "ArchBeam", Vector3.new(gap + 6, 1.4, 1.6), beamCF, C.wood, SM.WoodPlanks, false)
+	local signCF = CFrame.lookAt(center + Vector3.new(0, 13.4, 0) + facing * 0.9, center + Vector3.new(0, 13.4, 0) + facing * 10)
+	local sign = block(g, "ArchSign", Vector3.new(math.min(gap + 2, 18), 2.6, 0.35), signCF, C.cream, nil, false)
+	boardText(sign, Enum.NormalId.Front, title(text), nil, 220)
+	block(g, "ArchSignTag", Vector3.new(math.min(gap + 2, 18) + 0.4, 0.45, 0.4), signCF * CFrame.new(0, 1.5, 0.05), accent, nil, false)
+	-- Bunting: small pennants hanging under the beam.
+	local n = math.floor(gap / 3)
+	for i = 1, n do
+		local x = -gap / 2 + (i - 0.5) * gap / n
+		local pennant = makeWedge(g, "Pennant", Vector3.new(0.12, 1.4, 1.1), beamCF * CFrame.new(x, -1.5, 0) * CFrame.Angles(0, math.pi / 2, math.pi), if i % 2 == 0 then accent else C.cream)
+		pennant.CanCollide = false
+	end
+	return g
+end
+
+function WorldBuilder.buildHubLandscape(land: Instance, c: Vector3)
+	-- 1. Throw Line gateway across the avenue, between the planters and the stalls.
+	gateway(land, "ThrowLineGate", Vector3.new(0, 0, -70), Vector3.new(1, 0, 0), 18, Vector3.new(0, 0, -1), "THROW LINE  ▲", C.amber)
+	-- 2. Plot district gateways where the cross path meets each promenade.
+	for _, sx in { -1, 1 } do
+		gateway(land, if sx < 0 then "WestPlotsGate" else "EastPlotsGate", Vector3.new(sx * 104, 0, c.Z), Vector3.new(0, 0, 1), 14, Vector3.new(-sx, 0, 0), "PET PLOTS", C.leafDark)
+	end
+	-- 3. Paved forecourts in front of the two stalls (where the side paths end).
+	for _, sx in { -1, 1 } do
+		column(land, if sx < 0 then "HatcheryForecourt" else "ShopForecourt", Vector3.new(sx * 30, 0, -95), 0.32, 18, C.cream:Lerp(C.sand, 0.5), SM.Slate, true)
+		column(land, "ForecourtRing", Vector3.new(sx * 30, 0, -95), 0.3, 19.2, C.terracotta, SM.Brick, true)
+	end
+	-- 4. Boulevard trees along the cross path, both sides, both directions.
+	for _, sx in { -1, 1 } do
+		for _, x in { 50, 64, 78, 92 } do
+			for _, sz in { -1, 1 } do
+				local pos = Vector3.new(sx * x, 0, c.Z + sz * 13)
+				column(land, "TreePit", pos, 0.25, 4.4, C.woodDark, SM.Wood, false)
+				tree(land, pos, 0.95, C.leaf)
+			end
+		end
+	end
+	-- 5. Hedges along the hub side of both promenades, with gaps for every crossing.
+	local hedgeRuns = {
+		{ -110, -232, -160 }, { -110, -140, -92 },
+		{ 110, -232, -160 }, { 110, -140, -56 },
+	}
+	for _, h in hedgeRuns do
+		local x, z0, z1 = h[1], h[2], h[3]
+		local len = z1 - z0
+		block(land, "Hedge", Vector3.new(2.4, 2.6, len), CFrame.new(x, 1.3, (z0 + z1) / 2), C.leafDark, SM.Grass, true)
+		for k = 0, math.floor(len / 12) do
+			blob(land, "HedgeBloom", Vector3.new(1, 0.7, 1), CFrame.new(x, 2.75, z0 + 6 + k * 12), if k % 2 == 0 then C.amber else C.cream)
+		end
+	end
+	-- 6. Groves in the four open quadrants: a ring of trees round a bench and flowers.
+	local groves = { Vector3.new(-72, 0, -246), Vector3.new(72, 0, -246), Vector3.new(-84, 0, -114), Vector3.new(84, 0, -114) }
+	for gi, g in groves do
+		local count = 0
+		for k = 0, 5 do
+			local a = math.rad(k * 60 + gi * 17)
+			local pos = g + Vector3.new(math.cos(a) * 13, 0, math.sin(a) * 11)
+			if not hubBlocked(pos, 5) then
+				tree(land, pos, 0.85 + (k % 3) * 0.15)
+				count += 1
+			end
+		end
+		flowers(land, g + Vector3.new(3, 0, 2), 1.2)
+		bush(land, g + Vector3.new(-4, 0, -2), 1.1)
+		bench(land, g + Vector3.new(0, 0, 5), 0)
+		local _ = count
+	end
+end
+
 ------------------------------------------------------------------ sections
 
 local function buildHub(root: Instance): CFrame
@@ -489,24 +572,12 @@ local function buildHub(root: Instance): CFrame
 		end
 	end
 
-	-- Scattered toy trees, kept off paths, stalls, the gym and the plots.
-	local placed = 0
-	for _ = 1, 260 do
-		if placed >= 26 then
-			break
-		end
-		local pos = Vector3.new(randRange(-205, 205), 0, randRange(-288, -10))
-		if not hubBlocked(pos, 6) then
-			tree(hub, pos, randRange(0.9, 1.3))
-			placed += 1
-		end
-	end
-	for _ = 1, 10 do
-		local pos = Vector3.new(randRange(-200, 200), 0, randRange(-285, -12))
-		if not hubBlocked(pos, 4) then
-			rock(hub, pos, C.stone, randRange(0.5, 0.9))
-		end
-	end
+	-- Landscaping is composed, not scattered: a gateway that frames the view from the
+	-- spawn down the avenue to the Throw Line, gateways into both plot districts, paved
+	-- forecourts at the stalls, a tree-lined cross boulevard, hedges along the plot
+	-- promenades and four groves that fill the empty quadrants. Nothing sits on a path.
+	local land = folder("HubLandscape", hub)
+	WorldBuilder.buildHubLandscape(land, c)
 
 	-- Welcome sign facing the spawn.
 	signBoard(hub, "WelcomeSign", Vector3.new(-15, 0, -110), Vector3.new(0.4, 0, -1), 10, 3.6, titleSub("SNACK FORCE", "Pet Toss Safari Park"), 2.4, 150)
