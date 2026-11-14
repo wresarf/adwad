@@ -155,25 +155,49 @@ const WALL_SHADOW = new THREE.MeshBasicMaterial({ color: "#140a0c", transparent:
 const FONT = "LilitaOne";
 const fontCss = `@font-face { font-family: '${FONT}'; src: url('${staticFile("fonts/LilitaOne-Regular.ttf")}') format('truetype'); }`;
 
+// captions: lower-middle (inside the 9:16 safe area, clear of the bottom UI band), 2-3 words, active word lit,
+// a speaker tag for the pros' dialogue, bigger red-accented hook words
 const Captions: React.FC<{ t: number; scale: number }> = ({ t, scale }) => {
   const c = CHUNKS.find((k) => t >= k.s && t < k.e);
   if (!c) return null;
-  const pop = Math.min(1, (t - c.s) / 0.08);
+  const pop = Math.min(1, (t - c.s) / 0.1);
+  const hook = c.s < 3.2;
+  const size = (hook ? 112 : 86) * scale;
   return (
-    <div style={{ position: "absolute", left: 0, right: 0, top: `${62 * 1}%`, display: "flex", justifyContent: "center", padding: `0 ${70 * scale}px` }}>
+    <div style={{ position: "absolute", left: 0, right: 0, top: `${hook ? 57 : 61}%`, display: "flex", flexDirection: "column", alignItems: "center", padding: `0 ${90 * scale}px` }}>
+      {c.speaker === "pro" && (
+        <div style={{ fontFamily: FONT, fontSize: 40 * scale, color: "#fff", background: "#c8313a", borderRadius: 14 * scale, padding: `${4 * scale}px ${18 * scale}px`, marginBottom: 10 * scale, border: `${4 * scale}px solid #0b0a0c`, letterSpacing: 2 * scale }}>THE PROS</div>
+      )}
       <div style={{
-        fontFamily: FONT, fontSize: 92 * scale, lineHeight: 1.05, textAlign: "center", color: "#fff",
-        WebkitTextStroke: `${14 * scale}px #0b0a0c`, paintOrder: "stroke fill", letterSpacing: 1 * scale,
-        textShadow: `0 ${6 * scale}px 0 rgba(0,0,0,0.45)`, transform: `scale(${0.9 + 0.1 * pop})`, textTransform: "uppercase",
+        fontFamily: FONT, fontSize: size, lineHeight: 1.04, textAlign: "center", color: "#fff", maxWidth: 900 * scale,
+        WebkitTextStroke: `${(hook ? 16 : 13) * scale}px #0b0a0c`, paintOrder: "stroke fill", letterSpacing: 1.5 * scale,
+        textShadow: `0 ${7 * scale}px 0 rgba(0,0,0,0.55)`, transform: `translateY(${(1 - pop) * 18 * scale}px) scale(${0.86 + 0.14 * pop})`, opacity: 0.4 + 0.6 * pop, textTransform: "uppercase",
       }}>
         {c.words.map((w, i) => {
           const active = t >= w.s && (i === c.words.length - 1 || t < c.words[i + 1].s);
+          const hot = hook && /inside|outside/i.test(w.w);
+          const col = active ? (hot ? "#ff5a3c" : c.speaker === "pro" ? "#ff9b8f" : "#ffd84a") : hot ? "#ff8a6a" : "#ffffff";
           return (
-            <span key={i} style={{ color: active ? (c.speaker === "pro" ? "#ff9b8f" : "#ffd84a") : "#ffffff" }}>
-              {w.w.replace(/[,.]$/, "")}{i < c.words.length - 1 ? " " : ""}
+            <span key={i} style={{ color: col, display: "inline-block", marginRight: i < c.words.length - 1 ? size * 0.26 : 0, transform: active ? "scale(1.06)" : undefined }}>
+              {w.w.replace(/[,.]$/, "")}
             </span>
           );
         })}
+      </div>
+    </div>
+  );
+};
+
+// small game-style HUD chip (top centre, inside the safe area)
+const Hud: React.FC<{ s: State; scale: number }> = ({ s, scale }) => {
+  if (s.shot < 4 || s.shot > 19) return null;
+  const day = s.dawn > 0.5;
+  return (
+    <div style={{ position: "absolute", top: 120 * scale, left: 0, right: 0, display: "flex", justifyContent: "center" }}>
+      <div style={{ fontFamily: FONT, fontSize: 38 * scale, color: day ? "#3b2410" : "#e9f0ff", background: day ? "rgba(255,214,140,0.9)" : "rgba(12,16,40,0.72)",
+        border: `${4 * scale}px solid ${day ? "#3b2410" : "#8fa6ff"}`, borderRadius: 40 * scale, padding: `${6 * scale}px ${26 * scale}px`, letterSpacing: 3 * scale, display: "flex", alignItems: "center", gap: 12 * scale }}>
+        <span style={{ width: 24 * scale, height: 24 * scale, borderRadius: "50%", background: day ? "#ff9d2e" : "#dfe8ff", boxShadow: day ? "none" : `inset ${-7 * scale}px 0 0 #6f82c9`, display: "inline-block" }} />
+        {day ? "SUNRISE  SURVIVED" : s.shot >= 15 ? "NIGHT 1  ESCAPE!" : "NIGHT 1  LOCKED OUT"}
       </div>
     </div>
   );
@@ -199,8 +223,11 @@ export const LastNoob: React.FC = () => {
       <ThreeCanvas width={width} height={height} gl={{ antialias: getInputProps().aa !== false, stencil: true }} dpr={1}>
         <Scene s={s} />
       </ThreeCanvas>
-      {/* grade: cool vignette at night, warm lift at dawn */}
-      <AbsoluteFill style={{ background: `radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 55%, rgba(${s.dawn > 0.5 ? "60,20,10" : "5,8,30"},0.55) 100%)` }} />
+      {/* grade: soft-light colour wash (teal night / peach dawn), vignette, red pulse on the knocks */}
+      <AbsoluteFill style={{ background: s.dawn > 0.5 ? "linear-gradient(180deg, rgba(255,170,110,0.35), rgba(255,120,150,0.18))" : "linear-gradient(180deg, rgba(40,70,160,0.32), rgba(20,120,140,0.22))", mixBlendMode: "soft-light", opacity: s.interior >= 1 ? 0.45 : 1 }} />
+      <AbsoluteFill style={{ background: `radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 52%, rgba(${s.dawn > 0.5 ? "60,20,10" : "4,6,24"},0.62) 100%)` }} />
+      {s.alarm > 0.02 && <AbsoluteFill style={{ background: "radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 40%, rgba(200,20,20,0.55) 100%)", opacity: Math.min(1, s.alarm) }} />}
+      <Hud s={s} scale={scale} />
       {s.flash > 0 && <AbsoluteFill style={{ background: s.shot === 15 ? "#fff3cf" : "#fff", opacity: s.flash }} />}
       <Title a={s.title} scale={scale} />
       {props.captions !== false && <Captions t={frame / 30} scale={scale} />}

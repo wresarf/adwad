@@ -7,7 +7,7 @@ import fs from "node:fs";
 const [prefix, frames, scale = "0.5"] = process.argv.slice(2);
 fs.mkdirSync(path.dirname(prefix), { recursive: true });
 const chromiumOptions = { gl: process.env.GL || "swangle" };
-const inputProps = { audio: false, captions: process.env.CAPTIONS !== "0" };
+const inputProps = { audio: false, captions: process.env.CAPTIONS !== "0", aa: true };
 const serveUrl = await bundle({ entryPoint: path.resolve("src/index.ts"), publicDir: path.resolve("public") });
 const composition = await selectComposition({ serveUrl, id: "LastNoob", chromiumOptions, inputProps });
 const onBrowserLog = (l) => { if (l.type === "error" || l.type === "warning") console.log(`[${l.type}]`, l.text.slice(0, 300)); };

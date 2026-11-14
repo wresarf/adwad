@@ -26,7 +26,7 @@ Hook: *"They locked him outside. Then something knocked from inside."*
 | `src/LastNoob.tsx` | Composition: scene, vignette grade, flashes, title card, word-highlighted captions, audio |
 | `scripts/stills.mjs` | Look-check stills (`node scripts/stills.mjs out/x_ 22,137,874 0.5`) |
 | `scripts/render.sh`, `scripts/short_qa.py` | Full 30 fps render, then the package's frame-by-frame QA |
-| `scripts/render_preview.sh` | CPU-only preview: composition `LastNoob15` (the same timeline sampled at 15 fps), 432x768, no MSAA, muxed with the mix |
+| `scripts/render_preview.sh` | CPU-only preview: composition `LastNoob15` (the same timeline sampled at 15 fps), 540x960 with MSAA, muxed with the mix |
 
 ## Run
 ```bash
@@ -35,7 +35,7 @@ npx remotion browser ensure
 npm run studio                       # preview with scrubbing
 node scripts/stills.mjs out/s_ 22,137,874,1054 0.5
 python audio/score.py                # rebuild music + SFX + mix (needs numpy, scipy, ffmpeg)
-./scripts/render_preview.sh          # fast 15 fps 432x768 preview -> out/the_last_noob_preview.mp4
+./scripts/render_preview.sh          # 15 fps 540x960 preview -> out/the_last_noob_preview.mp4
 ./scripts/render.sh                  # 1080x1920 master -> out/the_last_noob.mp4 (SCALE=0.5 for a fast 540x960 pass)
 # regenerate the narration (optional): pip install piper-tts, download en_US-joe-medium.onnx(.json) from rhasspy/piper-voices
 PIPER_MODEL=/path/en_US-joe-medium.onnx python audio/voice.py
