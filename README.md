@@ -15,10 +15,15 @@ lune run tests/run.luau SnackForce_PetToss.rbxl   # offline tests against the bu
 ./scripts/build.sh
 # dev tool: top-down SVG map of the generated world
 lune run tests/map.luau -300 300 -320 40 2 /tmp/hub.svg
+# dev tools: approximate review renders of the built place (not Roblox screenshots)
+lune run tests/gui.luau pets /tmp/pets-panel.svg 844 390 touch   # real HUD/panels, any viewport
+lune run tests/snapshots.luau pets /tmp/pets.svg                  # every species, 3/4 portrait
 ```
 
 The Lune suite loads the **built place file** and runs its ModuleScripts headlessly. It covers:
 - the full script hierarchy packed into the place, and client modules loading headlessly
+- HUD layout at six desktop, phone and tablet viewports (no overlaps, on screen, readable size, touch targets, clear of the thumbstick and jump button, panels fit)
+- v4: coin upgrades, pet actions (equip, lock, sell), the SaveGate release ordering, store loading and pending states, v3 to v4 save migration, and a paid-random-items audit
 - remote contracts (server and client source)
 - config integrity
 - the sweet-spot, combo and weather multipliers
@@ -47,7 +52,12 @@ The Lune suite loads the **built place file** and runs its ModuleScripts headles
 - **Biomes:** Sunny Meadow → Sizzle Dunes → Frostbite Peaks → Magma Fields → Toxic Swamp → Nuclear Wasteland. Each biome's wind and gravity stretch or shrink the throw. Past 2,500 m the snack reaches **Space**, and past 3,600 m it reaches **the Moon**. Both play skippable cutscenes. Catches below your *auto-skip rarity* setting skip the cutscene automatically.
 - **Cravings:** every biome craves Berry, Meat, Spicy or Cosmic, and the cravings re-roll with each weather event. Landing the matching food builds a streak, with combo multipliers 1.5 → 2 → 3 → 4 → 5 → 6.5 → 8 → **10×** mutation odds. A miss resets the streak.
 - **Mutations:** materials are Normal / Gold / Diamond / Emerald / Ruby / Rainbow. Sizes are Normal / Huge / Colossal / Monstrous / Titanic / Cosmic / Infinite.
-- **Fusion:** three identical pets (same species, material and size) fuse into the next material tier. *Fuse All* cascades.
+- **Fusion:** three identical pets (same species, material and size) fuse into the next material tier. *Fuse All* cascades, and a reveal shows the result.
+- **Pets panel:** tap a pet to select it. You can place it on your plot or move it back to your backpack, **lock** it (locked pets are never sold or fused), or sell one copy (tap twice to confirm).
+- **Upgrades** (Snack Shop → Upgrades, coins only):
+  - Training Coach: +25% training per level.
+  - Craving Chef: +50% craving coins per level.
+  - Night Shift: +1 h offline earnings per level.
 - **Auto-sell:** sells new catches (and existing pets with *Sell Matching*) at or below a chosen rarity. Mutated pets are protected by default.
 - **Weather:** every 90 s, a 45 s event starts. **Titan Storm** gives 3× size luck, **Feast Frenzy** gives 2× craving bonus (the streak grows twice as fast and craving coins double), and **Prism Aurora** gives 4× material luck.
 - **Plots:** six plot pads, each with 8 pedestals. Equipped pets stand on them with labels and earn passive income.
@@ -84,5 +94,6 @@ tests/                           Lune runtime shim + test-suite
 - Each remote has its own token-bucket rate limit. Throws and training also have cooldowns.
 - All arguments are type-checked, length-checked and checked against the configs.
 - Manual throws require the character to be at the Throw Line. The Gym bonus is checked against the server-side character position.
-- Quest, discovery, zone and offline rewards are all computed and paid by the server. Two remotes were added for the store: `StorePurchase` (it only asks the server to show a prompt, or to spend Gems on a fixed offer) and `HatchEgg`.
+- Quest, discovery, zone and offline rewards are all computed and paid by the server. Four remotes were added after the original ten: `StorePurchase` (it only asks the server to show a prompt, or to spend Gems on a fixed offer), `HatchEgg`, `ManagePet` (equip, unequip, lock, unlock or sell one group) and `BuyUpgrade` (coins only).
+- Saves are session-locked. The save made when a player leaves or the server closes is the final write and releases the lock (`Server/SaveGate`).
 - Saved data is sanitised on load: values are clamped, UIDs reassigned, and unknown pets and foods dropped. If a load fails, the player still gets a playable session, but the save is never overwritten.

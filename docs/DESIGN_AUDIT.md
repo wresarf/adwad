@@ -1,4 +1,4 @@
-# Design audit: v3 redesign
+# Design audit: v3 redesign and v4 quality pass
 
 This document is for development only. Players get the single `SnackForce_PetToss.rbxl` file.
 
@@ -76,7 +76,88 @@ This document is for development only. Players get the single `SnackForce_PetTos
 
 **IDs and prices:** every pass and product ID is `0` in `Config/MonetizationConfig.luau`. While an ID is 0, the Store shows "Not available yet", no purchase prompt opens, and no price lookup is made. Once real IDs are set, the Robux prices come from `GetProductInfoAsync`, falling back to `GetProductInfo`. No Robux prices are hard-coded.
 
-## Not verified
+## v4 quality pass (2026-11-14)
+
+This pass checked the v3 claims instead of repeating them. Two new dev tools render the **built place** headlessly so layout and models could actually be looked at:
+
+- `tests/gui.luau` runs the real `Client/Hud` and `Client/Panels` modules with fake engine services and draws the GUI tree as SVG. It approximates Roblox layout (Size, Position, AnchorPoint, UIPadding, UIListLayout, UIGridLayout, AutomaticSize with estimated text widths, ScrollingFrame clipping, Sibling ZIndex). Fonts are substitutes and text widths are estimates.
+- `tests/render3d.luau` is a small software renderer (perspective camera, painter's algorithm, flat shading) used for pet portraits, viewport previews and world views.
+
+Neither is a Roblox screenshot. Nothing in this pass was run in Roblox Studio.
+
+### What the renders found, and the fixes
+
+| Found | Fix |
+| --- | --- |
+| The quest card's full-size tap button shared a parent with its `UIListLayout`. Roblox lays out every sibling GuiObject, so the button pushed the quest text below the card. | The list moved into an inner `Body` frame; the tap target is a sibling of it. |
+| On an 844×390 phone the 1280×720 canvas scaled to 0.65, so captions rendered at about 10 px and nav labels were tiny. | A scale floor (`Hud.scaleFor`): the canvas is never wider than 900 or taller than 460 logical units on small screens. Captions now render at 12.7 px on 844×390 and 11 px on a 667×375 phone. |
+| The left nav column reached into the bottom-left thumbstick corner on touch devices. | The compact layout puts the nav in a 4×2 block under the quest card, with 60-unit cells (44 px or more on every tested phone). |
+| The bottom buttons sat over the thumbstick corner on phones and tablets. | On touch screens the cluster is placed between the thumbstick corner and Roblox's small-screen jump button (about W−95…W−25, H−90…H−20, from the PlayerModule TouchJump defaults). |
+| Panels were 540 tall on a 462-unit phone canvas. | `Panels:fit` sizes panels to the canvas. The pet sheet scrolls. |
+| The quest card, Throw bar and cravings stayed visible around open panels. | `Hud:onPanel` hides them while a panel is open; the wallet and nav stay. |
+| Pet previews were framed by height only, so frogs, slimes, the hippo and the toucan were cropped. | `PetModelBuilder.build` now also returns the footprint width, and `PetModelBuilder.portraitCamera` fits both height and width. |
+| Pup, Kitty, Bear, Dragon and Lion shared one standing four-leg block. | Kitty now sits upright with haunches, whiskers and a tail curled on the ground. Bear is a sitting teddy with its feet forward and paw pads. The Dragon has raised wings with a wing bone. |
+
+`tests/run.luau` turns the layout checks into a test at 1280×720, 1920×1080, 800×600, 844×390 touch, 667×375 touch and 1024×768 touch. It checks:
+- no HUD regions overlap;
+- everything is on screen;
+- caption size;
+- touch targets of 44 px or more;
+- the thumbstick corner and jump button are kept clear;
+- every panel fits;
+- the play HUD hides behind panels.
+
+### State audit (every screen)
+
+| Screen | States covered after this pass |
+| --- | --- |
+| Snack Shop | Equipped ✓, Equip (owned), Buy (affordable), locked price with a progress bar toward the next snack. A new **Upgrades** tab shows Buy, "Need N more" and Maxed ✓, with level pips. |
+| Pets | Empty, grouped, on plot / partly on plot, 🔒 locked, and **selected** (thick leaf edge plus a detail sheet). The sheet offers Place on plot or Back to backpack, Fuse 3 (disabled with a count, or "Unlock to fuse"), Lock or Unlock, and Sell 1 with a second tap to confirm. |
+| Eggs | Hatch (affordable) or "Need N 🐾". Each egg has a 3D preview of every possible pet with its odds, rarity, income and Owned ✓. View or hide odds. |
+| Hatch / fusion / offer reveal | The header names the source ("Safari Egg hatched", "Fusion complete", "Fused 3 times · best result", "Added to your pets"). The first tap skips the wobble. **Again · 3 🐾** shows only when you can afford another hatch. |
+| Store | Owned ✓, priced, **Checking price…** (configured, not fetched yet), **Finishing…** (a Gem receipt is saving), "Try again later" (fetch error), Not on sale, and Not available yet (unset id). Gem offers show "Need N more 💎" instead of a dead button. |
+| Settings, Index, Help | Unchanged, but checked by the panel-fit test. |
+| Input | Gamepad ButtonB closes the open panel. |
+
+### Gameplay gaps fixed
+
+- **Pet management.** You could not choose which pets stand on your plot, and nothing could set the saved `locked` flag. The new `ManagePet` remote acts on one group of identical pets. Equip and Unequip move one copy and explain when the plot is full. Lock and Unlock cover the whole group, and locked pets are never auto-sold, sold through Sell matching or fused. Sell 1 prefers a copy that isn't on the plot.
+- **Earned upgrades (coins only).** The new `BuyUpgrade` remote and `Config/UpgradeConfig` add three upgrades. Each level has a fixed price and effect, and none touch mutation luck, the sweet spot, combos or weather.
+  - Training Coach: +25% strength per training, 4 levels.
+  - Craving Chef: +50% craving-match coins, 3 levels.
+  - Night Shift: +1 h offline cap, 3 levels.
+- **Fusion celebration.** FusePets now fires a reveal for a single fuse, and for Fuse all it shows the best surviving result.
+- **Save v4.** Adds `upgrades`. v1–v3 saves migrate with no upgrades and keep `locked`, receipts, Gems and tokens.
+
+### Purchase and persistence fixes
+
+- **Session lock after leaving.** The lock could be re-taken after a player left. An autosave or receipt queued behind the releasing save in `PlayerRemoving` would write again with a fresh lock, so the player's next server waited up to 18 s and then loaded an unsaved session for up to 5 minutes. `Server/SaveGate` now makes the releasing save the session's final write. Leaving sessions stop taking receipts, which return `NotProcessedYet` so Roblox retries them on the next join.
+- **Shutdown.** `BindToClose` saved *without* releasing the lock and forced a concurrent write by setting `saving = false`. It now does a releasing save for every player, waiting for any in-flight save first.
+- **Prices.** Configured offers report `loading` until fetched. Errored fetches are retried every 30 s, and successful ones refresh every 10 minutes. With every id at 0, no requests are made.
+- **Paid random items audit (test).** Paw Tokens only change through gameplay `giveTokens` and egg spending. Gem offers never give tokens or luck, no pass is a luck, token or egg pass, and the PolicyService gate is still consulted for any egg priced in a purchasable currency.
+
+### Sources checked in this pass
+
+These were fetched in this session. Quotes went through a summariser, so check exact wording on the live pages before reusing them.
+
+- **[Paid random items](https://create.roblox.com/docs/production/monetization/paid-random-items).** "Paying Robux to buy gems or spin tickets that are spent at a prize wheel" counts as paid random. So any Gem → token, Gem → luck or Robux → egg path would make the Safari Eggs paid random items. None exists, and a test guards it. Odds stay shown for earn-only eggs anyway.
+- **[Developer products](https://create.roblox.com/docs/production/monetization/developer-products) and [player data purchasing](https://create.roblox.com/docs/cloud-services/data-stores/player-data-purchasing).** The docs give this order: check the PurchaseId, grant, record, save, then return PurchaseGranted, or NotProcessedYet if the save fails. They also call for a single callback and no grants from `Prompt*PurchaseFinished`. The implementation matches. The docs also mention a newer `BindReceiptHandler`; ProcessReceipt is not deprecated, so it stays.
+- **[MarketplaceService](https://create.roblox.com/docs/reference/engine/classes/MarketplaceService).** `GetProductInfo` is deprecated in favour of `GetProductInfoAsync`, which is already used first.
+- **[Monetization overview](https://create.roblox.com/docs/production/monetization).** It bans fake "always on sale" discounts, false scarcity, countdowns that restart on their own, and pushy copy. The Store has none: Coin Rush is a real fixed duration, and the copy is "Buy · 💎 250" or "Need N more 💎".
+- **[Accessibility](https://create.roblox.com/docs/production/publishing/accessibility) and [adaptive design](https://create.roblox.com/docs/production/publishing/adaptive-design).** They cover `GuiService.ReducedMotionEnabled`, `PreferredTextSize`, using symbols alongside colour, and keeping buttons out of the bottom corners where the default touch controls sit. No official minimum text size or touch-target size was found; 44 px is a common platform convention, not a Roblox rule.
+- **Not found or blocked.** The performance-optimization pages gave no numeric part, particle or ViewportFrame budgets. `/docs/ui/mobile-input` returned 404, and the Community Standards help page returned 403.
+- **[Kenney Cube Pets](https://kenney.nl/assets/cube-pets) (CC0 preview images viewed; style reference only).** The head and body read as one bevelled block of about 1:1 on stubby legs, with big glossy wide-set eyes. Species are told apart by ears, tails and patches, with soft shading and no outlines. That supports keeping one shared face and using pose and add-ons for silhouette.
+- **[Kenney UI Pack](https://kenney.nl/assets/ui-pack) and [UI Pack Adventure](https://kenney.nl/assets/ui-pack-adventure).** A lighter button face over a darker 4–5 px lip, small corner radii, and parchment or wood panels. That matches the existing toy button.
+- **Competitors.** For [Throw Food For Animals](https://www.roblox.com/games/120219252362013/Throw-Food-For-Animals) only the page text and thumbnail were available: a thick throw arc to a glowing landing ring, colour-coded ground zones, and a big creature labelled with its income. For the [YouTube video](https://youtu.be/r157nlkQwz4) only the title (via oEmbed) and the thumbnail were available, not the footage. Nothing here claims the video was watched or that this game is better than either.
+
+### Still not done / not verified
+
+- **Not run on Roblox.** No Roblox Studio playtest and no engine screenshots. The renders are approximations.
+- **No audio.** Built-in `rbxasset://sounds` paths couldn't be verified offline, and nothing uses unverified ids.
+- **World unchanged.** World composition was not reworked in this pass beyond what v3 built.
+- **Purchases untested live.** Purchases still haven't been tested against live Roblox services, because all ids are 0.
+
+## Not verified (v3)
 
 - The game hasn't been playtested in Roblox Studio and there are no in-game screenshots. Checks are limited to the strict type-check, the Rojo build and 57 headless Lune tests against the built place file.
 - Purchases haven't been tested against real Roblox services, because nothing is published and the IDs are 0.

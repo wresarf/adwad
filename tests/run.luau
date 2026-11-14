@@ -1333,6 +1333,70 @@ test("paid random audit: no Robux path reaches eggs, tokens or luck", function()
 	ok(serverSrc:find("if EggConfig.isPaidRandom(egg) then market:paidRandomRestricted(s.player)", 1, true))
 end)
 
+test("HUD layout: no overlaps, on screen, readable and clear of touch controls", function()
+	local Gui = require("./gui")
+	local cases = {
+		{ 1280, 720, false },
+		{ 1920, 1080, false },
+		{ 800, 600, false },
+		{ 844, 390, true }, -- phone landscape (points)
+		{ 667, 375, true }, -- small phone
+		{ 1024, 768, true }, -- tablet
+	}
+	for _, c in cases do
+		local vp = R.Vector2.new(c[1], c[2])
+		local label = string.format("%dx%d%s", c[1], c[2], if c[3] then " touch" else "")
+		local built = Gui.build(placePath, "hud", vp, c[3])
+		local hud = built.hud
+		local rects = Gui.rects(built.playerGui, vp)
+		local regions = { quest = hud.quest, nav = hud.nav, wallet = hud.wallet, weather = hud.weatherChip, cravings = hud.cravings, context = hud.context, meter = hud.meter, train = hud.trainBtn, throw = hud.throwBtn, food = hud.foodChip }
+		local list = {}
+		for name, inst in regions do
+			local r = rects[inst]
+			ok(r, label .. ": " .. name .. " not laid out")
+			ok(r.x >= -0.5 and r.y >= -0.5 and r.x + r.w <= c[1] + 0.5 and r.y + r.h <= c[2] + 0.5, string.format("%s: %s off screen (%d,%d %dx%d)", label, name, r.x, r.y, r.w, r.h))
+			table.insert(list, { name = name, r = r })
+		end
+		for i = 1, #list do
+			for j = i + 1, #list do
+				local a, b = list[i].r, list[j].r
+				local overlap = a.x < b.x + b.w - 1 and b.x < a.x + a.w - 1 and a.y < b.y + b.h - 1 and b.y < a.y + a.h - 1
+				ok(not overlap, string.format("%s: %s overlaps %s", label, list[i].name, list[j].name))
+			end
+		end
+		local scale = rects[hud.throwBtn].h / hud.throwBtn.Size.Y.Offset
+		local UIm = built.ui or nil
+		local minCaption = if c[1] < 700 then 11 else 12 -- the smallest phones get 11 px
+		ok(15 * scale >= minCaption, string.format("%s: captions render at %.1f px", label, 15 * scale))
+		if c[3] then
+			for _, name in { "train", "throw", "food" } do
+				ok(rects[regions[name]].h >= 44, label .. ": " .. name .. " touch target under 44 px")
+			end
+			for _, b in hud.navButtons do
+				ok(rects[b].h >= 44 and rects[b].w >= 44, label .. ": nav button under 44 px")
+			end
+			-- Roblox's small-screen jump button (~W-95..W-25, H-90..H-20) and the classic
+			-- thumbstick corner stay free of HUD buttons.
+			for name, inst in regions do
+				local r = rects[inst]
+				local inJump = r.x + r.w > c[1] - 95 and r.y + r.h > c[2] - 90
+				local inStick = r.x < c[1] * 0.3 and r.y + r.h > c[2] * 0.6
+				ok(not inJump, label .. ": " .. name .. " covers the jump button")
+				ok(not inStick, label .. ": " .. name .. " sits in the thumbstick corner")
+			end
+		end
+		-- Every panel fits on screen.
+		for key, frame in hud.panels.frames do
+			hud.panels:toggle(key)
+			local rr = Gui.rects(built.playerGui, vp)[frame]
+			ok(rr and rr.x >= 0 and rr.y >= 0 and rr.x + rr.w <= c[1] + 0.5 and rr.y + rr.h <= c[2] + 0.5, label .. ": panel " .. key .. " off screen")
+			ok(not hud.bottom.Visible and not hud.quest.Visible, label .. ": play HUD hidden behind " .. key)
+		end
+		hud.panels:toggle(nil)
+		ok(hud.bottom.Visible and hud.quest.Visible, label .. ": play HUD back after closing")
+	end
+end)
+
 test("UI: readable fixed type, sufficient contrast, reduced motion", function()
 	local client = SP.StarterPlayerScripts.Client
 	for _, name in { "UI", "Hud", "Panels" } do

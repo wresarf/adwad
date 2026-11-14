@@ -150,15 +150,18 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	local quest = UI.surface(root, UDim2.fromOffset(300, 0), UDim2.fromOffset(12, 8), C.Ivory)
 	quest.AutomaticSize = Enum.AutomaticSize.Y
 	UI.padding(quest, 12, 14, 14, 14)
-	UI.list(quest, 4)
-	local questTop = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 1, Parent = quest })
+	-- The list lives in an inner frame: a UIListLayout positions every sibling GuiObject,
+	-- so the full-card tap target below must not share a parent with it.
+	local questBody = UI.new("Frame", { Name = "Body", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = quest })
+	UI.list(questBody, 4)
+	local questTop = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 20), LayoutOrder = 1, Parent = questBody })
 	self.questHeader = UI.text(questTop, "Quest", UDim2.new(1, -90, 1, 0), nil, { size = T.Caption, color = C.Muted, font = UI.Font })
 	local rewardChip = UI.tag(questTop, "", C.AmberSoft, C.Charcoal, UDim2.new(1, 0, 0, -2))
 	rewardChip.AnchorPoint = Vector2.new(1, 0)
 	self.questReward = rewardChip
-	self.questTitle = UI.text(quest, "Loading your save", UDim2.new(1, 0, 0, 28), nil, { size = T.Title, font = UI.Display, order = 2 })
-	self.questHint = UI.text(quest, "", UDim2.new(1, 0, 0, 0), nil, { size = T.Small, color = C.Muted, font = UI.FontMedium, auto = Enum.AutomaticSize.Y, order = 3 })
-	local barHolder = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = 4, Parent = quest })
+	self.questTitle = UI.text(questBody, "Loading your save", UDim2.new(1, 0, 0, 28), nil, { size = T.Title, font = UI.Display, order = 2 })
+	self.questHint = UI.text(questBody, "", UDim2.new(1, 0, 0, 0), nil, { size = T.Small, color = C.Muted, font = UI.FontMedium, auto = Enum.AutomaticSize.Y, order = 3 })
+	local barHolder = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = 4, Parent = questBody })
 	local _, questFill, questBarText = UI.progressBar(barHolder, UDim2.new(1, 0, 0, 18), UDim2.fromOffset(0, 6), C.Leaf)
 	self.questFill = questFill
 	self.questBarText = questBarText
@@ -170,7 +173,7 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	end)
 
 	------------------------------------------------ navigation rail (left)
-	local nav = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(160, 400), Position = UDim2.fromOffset(12, 178), Parent = root })
+	local nav = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(160, 280), Position = UDim2.fromOffset(12, 178), Parent = root })
 	UI.new("UIGridLayout", { CellSize = UDim2.fromOffset(74, 64), CellPadding = UDim2.fromOffset(8, 8), SortOrder = Enum.SortOrder.LayoutOrder, Parent = nav })
 	self.nav = nav
 	for i, item in NAV do
@@ -280,7 +283,7 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	UI.textOutline(self.meterCaption)
 
 	-- Secondary: Train.
-	local trainBtn = UI.button(bottom, "Train", "secondary", UDim2.fromOffset(150, 66), UDim2.new(0.5, -280, 1, -70))
+	local trainBtn = UI.button(bottom, "Train", "secondary", UDim2.fromOffset(150, 66), UDim2.new(0.5, -270, 1, -70))
 	self.trainSub = UI.text(trainBtn:FindFirstChild("Face") :: any, "", UDim2.new(1, 0, 0, 18), UDim2.new(0, 0, 1, -22), { size = T.Caption, color = C.Muted, align = Enum.TextXAlignment.Center })
 	local trainLabel = UI.buttonLabel(trainBtn)
 	if trainLabel then
@@ -317,7 +320,7 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	self.throwBtn = throwBtn
 
 	-- Secondary: equipped snack (opens the shop).
-	local foodChip = UI.button(bottom, "", "secondary", UDim2.fromOffset(170, 66), UDim2.new(0.5, 130, 1, -70))
+	local foodChip = UI.button(bottom, "", "secondary", UDim2.fromOffset(170, 66), UDim2.new(0.5, 120, 1, -70))
 	local foodFace = foodChip:FindFirstChild("Face") :: any
 	local foodLabel = UI.buttonLabel(foodChip)
 	if foodLabel then
@@ -327,14 +330,15 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	UI.corner(self.foodDot, 14)
 	self.foodName = UI.text(foodFace, "Berry Bite", UDim2.new(1, -50, 0, 24), UDim2.fromOffset(44, 8), { size = T.Small, wrap = false })
 	self.foodInfo = UI.text(foodFace, "Change snack", UDim2.new(1, -50, 0, 20), UDim2.fromOffset(44, 32), { size = T.Caption, color = C.Muted, font = UI.FontMedium, wrap = false })
+	self.foodChip = foodChip
 	foodChip.Activated:Connect(function()
 		self.panels:toggle("Shop")
 	end)
 
 	-- Status chips (only when relevant).
-	self.comboChip = UI.tag(bottom, "", C.AmberSoft, C.Charcoal, UDim2.new(0.5, -280, 1, -100))
+	self.comboChip = UI.tag(bottom, "", C.AmberSoft, C.Charcoal, UDim2.new(0.5, -270, 1, -100))
 	self.comboChip.Visible = false
-	self.autoChip = UI.tag(bottom, "Auto-throw on", C.LeafSoft, C.LeafDark, UDim2.new(0.5, 130, 1, -100))
+	self.autoChip = UI.tag(bottom, "Auto-throw on", C.LeafSoft, C.LeafDark, UDim2.new(0.5, 120, 1, -100))
 	self.autoChip.Visible = false
 	self.boostChip = UI.tag(root, "", C.AmberSoft, C.Charcoal, UDim2.new(0.5, 0, 0, 94))
 	self.boostChip.AnchorPoint = Vector2.new(0.5, 0)
@@ -502,18 +506,16 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 		if v.X <= 1 or v.Y <= 1 then
 			return
 		end
-		local s = math.min(v.X / 1280, v.Y / 720)
-		if UserInputService.TouchEnabled then
-			-- Keep touch targets usable on phones while still fitting the layout.
-			s = math.max(s, math.min(0.8, v.X / 1100, v.Y / 600))
-		end
-		s = math.clamp(s, 0.5, 1.6)
+		local s = Hud.scaleFor(v)
 		uiScale.Scale = s
 		root.Size = UDim2.fromScale(1 / s, 1 / s)
 		popupScale.Scale = s
 		popups.Size = UDim2.fromScale(1 / s, 1 / s)
 		local logical = v / s
+		self.logical = logical
 		self:setCompact(logical.X < 1180 or logical.Y < 640)
+		self:layoutBottom(logical, s)
+		self.panels:fit(logical)
 	end
 	self.rescale = rescale
 	local function hookCamera()
@@ -529,21 +531,85 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	return self
 end
 
--- Small screens: shorter quest card, nav icons only in one tight column, cravings closed.
+-- UI scale for a viewport. The HUD is authored on a 1280x720 canvas; small screens
+-- (phones, small windows) get a scale floor so text never drops below a readable size,
+-- and the compact layout takes over instead of shrinking everything further.
+function Hud.scaleFor(v: Vector2): number
+	local s = math.min(v.X / 1280, v.Y / 720)
+	if s < 0.85 then
+		s = math.max(s, math.min(0.85, v.X / 900, v.Y / 460))
+	end
+	return math.clamp(s, 0.5, 1.6)
+end
+
+-- Small screens: shorter quest card, the nav as a 4x2 block right under it (clear of
+-- the touch thumbstick in the bottom-left), cravings closed.
 function Hud:setCompact(compact: boolean)
 	if compact == self.compact then
 		return
 	end
 	self.compact = compact
 	self.questHint.Visible = not compact and not self.questCollapsed
-	self.quest.Size = UDim2.fromOffset(if compact then 250 else 300, 0)
+	self.quest.Size = UDim2.fromOffset(if compact then 252 else 300, 0)
 	local grid = self.nav:FindFirstChildOfClass("UIGridLayout")
 	if grid then
-		grid.CellSize = if compact then UDim2.fromOffset(64, 56) else UDim2.fromOffset(74, 64)
+		grid.CellSize = if compact then UDim2.fromOffset(60, 60) else UDim2.fromOffset(74, 64)
+		grid.CellPadding = if compact then UDim2.fromOffset(6, 6) else UDim2.fromOffset(8, 8)
 	end
-	self.nav.Position = UDim2.fromOffset(12, if compact then 132 else 178)
+	self.nav.Size = if compact then UDim2.fromOffset(264, 126) else UDim2.fromOffset(160, 280)
+	self.nav.Position = UDim2.fromOffset(12, if compact then 128 else 178)
+	self.travel.Position = if compact then UDim2.fromOffset(12, 262) else UDim2.fromOffset(176, 178)
+	for _, b in self.navButtons do
+		local k = b:FindFirstChild("Keycap")
+		if k then
+			k.Visible = not compact
+		end
+	end
 	if compact then
 		self:setCravingsOpen(false)
+	end
+end
+
+-- Bottom action cluster. On touch phones the secondary buttons get narrower and the
+-- cluster sits between the thumbstick corner (bottom-left) and Roblox's jump button
+-- (about 95 x 90 px from the bottom-right corner on small screens).
+function Hud:layoutBottom(logical: Vector2, scale: number)
+	local touchCompact = self.compact and UserInputService.TouchEnabled
+	local narrow = touchCompact and logical.X < 950
+	local throwW = if narrow then 200 else 220
+	local trainW = if touchCompact then (if narrow then 120 else 130) else 150
+	local foodW = if touchCompact then (if narrow then 140 else 150) else 170
+	local gap = if narrow then 8 else 10
+	self.throwBtn.Size = UDim2.fromOffset(throwW, 82)
+	self.throwBtn.Position = UDim2.new(0.5, -throwW / 2, 1, -86)
+	self.trainBtn.Size = UDim2.fromOffset(trainW, 66)
+	self.trainBtn.Position = UDim2.new(0.5, -throwW / 2 - gap - trainW, 1, -70)
+	self.foodChip.Size = UDim2.fromOffset(foodW, 66)
+	self.foodChip.Position = UDim2.new(0.5, throwW / 2 + gap, 1, -70)
+	self.comboChip.Position = UDim2.new(0.5, -throwW / 2 - gap - trainW, 1, -100)
+	self.autoChip.Position = UDim2.new(0.5, throwW / 2 + gap, 1, -100)
+	local meterW = if narrow then 400 else 440
+	self.meter.Size = UDim2.fromOffset(meterW, 22)
+	self.meter.Position = UDim2.new(0.5, -meterW / 2, 0, 58)
+	local offset = 0
+	if UserInputService.TouchEnabled then
+		local left = logical.X * 0.3 + 6 + throwW / 2 + gap + trainW
+		local right = logical.X - 95 / scale - 6 - (throwW / 2 + gap + foodW)
+		local centre = if left <= right then left else (left + right) / 2
+		offset = centre - logical.X / 2
+	end
+	self.bottom.Position = UDim2.new(0.5, offset, 1, -10)
+end
+
+-- While a panel is open the play HUD steps back: only the wallet and the nav stay.
+function Hud:onPanel(name: string?)
+	local open = name ~= nil
+	self.quest.Visible = not open
+	self.bottom.Visible = not open
+	self.cravings.Visible = not open
+	self.weatherChip.Visible = not open or not self.compact
+	if open then
+		self.travel.Visible = false
 	end
 end
 

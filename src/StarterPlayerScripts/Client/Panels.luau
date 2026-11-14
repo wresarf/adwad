@@ -50,7 +50,7 @@ local function percent(p: number): string
 	return string.format("%.2f%%", p)
 end
 
-type Shell = { frame: Frame, body: ScrollingFrame, toolbar: Frame, subtitle: TextLabel, balance: TextLabel }
+type Shell = { frame: Frame, body: ScrollingFrame, toolbar: Frame, subtitle: TextLabel, balance: TextLabel, width: number }
 
 local PANEL_W, PANEL_H = 780, 540
 local PETS_W = 920 -- the Pets panel is wider to fit the selected-pet sheet
@@ -86,7 +86,7 @@ local function shell(root: Instance, title: string, subtitle: string, onClose: (
 		Parent = frame,
 	})
 	UI.padding(body, 2, 12, 12, 2)
-	return { frame = frame, body = body, toolbar = toolbar, subtitle = sub, balance = balance }
+	return { frame = frame, body = body, toolbar = toolbar, subtitle = sub, balance = balance, width = w }
 end
 
 local function clearList(list: Instance)
@@ -301,11 +301,24 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	self.sellArmed = nil
 
 	-- Selected-pet sheet (right column): details and the actions for one group.
-	local sheet = UI.surface(pets.frame, UDim2.fromOffset(SHEET_W, PANEL_H - 158), UDim2.new(1, -(SHEET_W + 20), 0, 142), C.Paper, UI.Radius.m)
+	-- Scrolls on short screens; the content is a fixed 346-unit column.
+	local sheet = UI.new("ScrollingFrame", {
+		Size = UDim2.new(0, SHEET_W, 1, -158),
+		Position = UDim2.new(1, -(SHEET_W + 20), 0, 142),
+		BackgroundColor3 = C.Paper,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 4,
+		ScrollBarImageColor3 = C.Muted,
+		CanvasSize = UDim2.fromOffset(0, 370),
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		Parent = pets.frame,
+	})
+	UI.corner(sheet, UI.Radius.m)
+	UI.stroke(sheet, C.Line, 1, 0.2)
 	UI.padding(sheet, 12)
 	self.sheet = sheet
-	self.sheetEmpty = UI.text(sheet, "Select a pet to see its details, place it on your plot, lock or sell it.", UDim2.fromScale(1, 1), nil, { size = T.Body, color = C.Muted, font = UI.FontMedium, align = Enum.TextXAlignment.Center })
-	local sheetBody = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Visible = false, Parent = sheet })
+	self.sheetEmpty = UI.text(sheet, "Select a pet to see its details, place it on your plot, lock or sell it.", UDim2.new(1, 0, 0, 200), nil, { size = T.Body, color = C.Muted, font = UI.FontMedium, align = Enum.TextXAlignment.Center })
+	local sheetBody = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 346), Visible = false, Parent = sheet })
 	self.sheetBody = sheetBody
 	self.sheetView = UI.new("Frame", { BackgroundColor3 = C.Ivory, Size = UDim2.new(1, 0, 0, 110), Parent = sheetBody })
 	UI.corner(self.sheetView, UI.Radius.s)
@@ -465,6 +478,21 @@ function Panels:toggle(name: string?)
 		end
 	end
 	self.open = name
+	if self.hud and self.hud.onPanel then
+		self.hud:onPanel(name)
+	end
+end
+
+-- Fits every panel inside the logical canvas (phones get shorter / narrower panels that
+-- scroll instead of spilling off screen). Keeps clear of the wallet at the top.
+function Panels:fit(logical: Vector2)
+	for _, sh in self.shells do
+		local w = math.min(sh.width, logical.X - 24)
+		local h = math.min(PANEL_H, logical.Y - 64)
+		local y = math.max(56, (logical.Y - h) / 2 + 8)
+		sh.frame.Size = UDim2.fromOffset(w, h)
+		sh.frame.Position = UDim2.new(0.5, -w / 2, 0, y)
+	end
 end
 
 function Panels:isOpen(): boolean

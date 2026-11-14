@@ -399,7 +399,7 @@ function UI.petViewport(parent: Instance, rec: { species: string, material: stri
 		Parent = parent,
 	})
 	-- Size is normalised so every pet fills the frame; mutations still show their material.
-	local model, height = PetModelBuilder.build(rec.species, rec.material or "Normal", "Normal", CFrame.new())
+	local model, height, width = PetModelBuilder.build(rec.species, rec.material or "Normal", "Normal", CFrame.new())
 	for _, d in model:GetDescendants() do
 		if d:IsA("ParticleEmitter") or d:IsA("PointLight") then
 			d:Destroy()
@@ -412,9 +412,9 @@ function UI.petViewport(parent: Instance, rec: { species: string, material: stri
 	end
 	model.Parent = vp
 	local camera = Instance.new("Camera")
-	camera.FieldOfView = 40
-	local target = Vector3.new(0, height * 0.45, 0)
-	camera.CFrame = CFrame.lookAt(target + Vector3.new(height * 0.95, height * 0.35, -height * 1.7), target)
+	local cf, fov = PetModelBuilder.portraitCamera(height, width)
+	camera.FieldOfView = fov
+	camera.CFrame = cf
 	camera.Parent = vp
 	vp.CurrentCamera = camera
 	return vp
