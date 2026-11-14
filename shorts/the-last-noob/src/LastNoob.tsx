@@ -77,7 +77,6 @@ const Scene: React.FC<{ s: State }> = ({ s }) => {
   const opacity = lerp(0.78, 0.6, d) * (d > 0.35 && d < 0.65 ? Math.abs(d - 0.5) / 0.15 : 1);
   const ground: ShadowSpec = { dir: shadowDir, n: [0, 1, 0], d: 0, opacity, color: d < 0.5 ? "#04061a" : "#3a1f2e" };
   const gMat = shadowMaterial(ground);
-  const ghostMat = s.ghostShadow ? shadowMaterial({ ...ground, opacity: opacity * s.ghostShadow.opacity, ref: 3 }) : null;
   const fog = mixC(N.fog, D.fog, d);
   const flick = 0.82 + 0.18 * Math.sin(s.t * 13) * Math.sin(s.t * 5.1 + 2);
   const exterior = s.interior < 1;
@@ -105,7 +104,12 @@ const Scene: React.FC<{ s: State }> = ({ s }) => {
       <ShadowContext.Provider value={gMat}>
         <Fence open={s.gate} />
         <LaneProps />
-        {s.actors.filter((a) => a.shadow).map((a) => <Blocky key={a.key} who={a.who as never} pose={a.pose} />)}
+      </ShadowContext.Provider>
+      {/* character shadows: the rig flattened onto the ground along the key light (opaque tint, no overlap darkening) */}
+      <ShadowContext.Provider value={groundShadowMat(d, 1)}>
+        <group matrix={flatten(shadowDir)} matrixAutoUpdate={false}>
+          {s.actors.filter((a) => a.shadow).map((a) => <Blocky key={a.key} who={a.who as never} pose={a.pose} />)}
+        </group>
       </ShadowContext.Provider>
       {s.decoy.visible && <Decoy {...s.decoy} />}
       {s.actors.map((a) => <Blocky key={a.key} who={a.who as never} pose={a.pose} flicker={a.flicker} />)}
@@ -117,9 +121,11 @@ const Scene: React.FC<{ s: State }> = ({ s }) => {
           </group>
         </ShadowContext.Provider>
       )}
-      {s.ghostShadow && ghostMat && (
-        <ShadowContext.Provider value={ghostMat}>
-          <Blocky who="void" pose={s.ghostShadow.pose} />
+      {s.ghostShadow && s.ghostShadow.opacity > 0.01 && (
+        <ShadowContext.Provider value={groundShadowMat(d, s.ghostShadow.opacity)}>
+          <group matrix={flatten(shadowDir, 0.024)} matrixAutoUpdate={false}>
+            <Blocky who="void" pose={s.ghostShadow.pose} />
+          </group>
         </ShadowContext.Provider>
       )}
       <Beam amount={s.beam} />
@@ -128,6 +134,21 @@ const Scene: React.FC<{ s: State }> = ({ s }) => {
 };
 
 const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
+// projection onto y = h along light direction l: x' = x - lx/ly * y, z' = z - lz/ly * y
+const flatten = (l: [number, number, number], h = 0.018) =>
+  new THREE.Matrix4().set(1, -l[0] / l[1], 0, 0, 0, 0, 0, h, 0, -l[2] / l[1], 1, 0, 0, 0, 0, 1);
+const gsCache = new Map<string, THREE.Material>();
+// shadow tint over grass: night blue-black, dawn violet (fades in for the ghost)
+function groundShadowMat(dawn: number, a: number) {
+  const k = `${dawn > 0.5 ? 1 : 0}|${a.toFixed(2)}`;
+  let m = gsCache.get(k);
+  if (!m) {
+    m = new THREE.MeshBasicMaterial({ color: dawn > 0.5 ? "#2a2a3e" : "#060814", transparent: true, opacity: (dawn > 0.5 ? 0.62 : 0.72) * a, depthWrite: false,
+      side: THREE.DoubleSide });
+    gsCache.set(k, m);
+  }
+  return m;
+}
 const WALL_SHADOW = new THREE.MeshBasicMaterial({ color: "#140a0c", transparent: true, opacity: 0.72, depthWrite: false, fog: false });
 
 // ---------------------------------------------------------------- HTML layers
@@ -167,15 +188,15 @@ const Title: React.FC<{ a: number; scale: number }> = ({ a, scale }) =>
   );
 
 export const LastNoob: React.FC = () => {
-  const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
+  const { width, height, fps } = useVideoConfig();
+  const frame = Math.min(TOTAL - 1, useCurrentFrame() * (30 / fps)); // story frames are 30 fps
   const s = stateAt(frame);
   const scale = height / 1920;
   const props = getInputProps() as { audio?: boolean; captions?: boolean };
   return (
     <AbsoluteFill style={{ background: "#000" }}>
       <style>{fontCss}</style>
-      <ThreeCanvas width={width} height={height} gl={{ antialias: true, stencil: true }} dpr={1}>
+      <ThreeCanvas width={width} height={height} gl={{ antialias: getInputProps().aa !== false, stencil: true }} dpr={1}>
         <Scene s={s} />
       </ThreeCanvas>
       {/* grade: cool vignette at night, warm lift at dawn */}

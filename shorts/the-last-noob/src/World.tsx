@@ -104,6 +104,10 @@ export const TREES: Tree[] = (() => {
   return out;
 })();
 
+// trees sorted by distance to the clearing, so the first SHADOW_TREES instances are the near ring
+TREES.sort((a, b) => Math.hypot(a.x, a.z - 3) - Math.hypot(b.x, b.z - 3));
+const SHADOW_TREES = 40;
+
 const TIERS = [
   { y: 2.2, w: 4.2, h: 1.6, c: "#1f6b45" },
   { y: 3.7, w: 3.2, h: 1.5, c: "#25804f" },
@@ -145,6 +149,7 @@ export const Forest: React.FC<{ sway: number; t: number; shadow?: THREE.Material
     p.sh.instanceMatrix.needsUpdate = true;
     if (shadow) p.sh.material = shadow;
     p.sh.visible = !!shadow;
+    p.sh.count = SHADOW_TREES; // only the trees nearest the clearing cast moon shadows (render cost)
   }
   return (
     <group>

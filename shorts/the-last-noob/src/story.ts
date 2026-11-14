@@ -341,14 +341,14 @@ export function stateAt(f: number): State {
       });
       const melt = ss(W("escape", 8), W("escape", 11), t);
       add("void", "void", { x: -5.2, z: -2.2, yaw: 0.8, armL: 1.2, armR: 1.2, face: "void", squash: lerp(1, 0.02, melt), scale: 1 - melt * 0.2 }, { shadow: false });
-      S.decoy = { ...S.decoy, visible: true, x: 0, z: 21, eyes: 0, collapse: ss(t0, t0 + 0.8, t) };
+      S.decoy = { ...S.decoy, visible: true, x: 0, z: 30, eyes: 0, collapse: ss(t0, t0 + 0.8, t) };
       S.cam = camKeys(t, t0, [{ t: t0, pos: [3.2, 2.0, 21.5], look: [-1.5, 1.4, 7.0], fov: 44 }, { t: shot.b / FPS, pos: [2.6, 1.8, 20.2], look: [-0.5, 1.4, 9.0], fov: 42 }], 0.02);
       break;
     }
     case 19: { // Welcome to the team, Noob.
       S.dawn = 1;
       S.gate = 1;
-      S.decoy = { ...S.decoy, visible: true, x: 0, z: 21, eyes: 0, collapse: 1 };
+      S.decoy = { ...S.decoy, visible: false };
       const pat = ss(W("welcome", 0), W("welcome", 1), t) * (1 - ss(W("welcome", 4), W("welcome", 4) + 0.4, t));
       add("noob", "noob", { x: 0.4, z: 15.0, yaw: -0.25, face: face(t, 9, "grin"), armL: 0.2 });
       add("red", "red", { x: -0.85, z: 15.1, yaw: 0.9, armR: 1.3 * pat + 0.1, face: face(t, 1, "smile") });
@@ -360,7 +360,7 @@ export function stateAt(f: number): State {
     case 20: { // He smiles. But on the grass behind him, there are two shadows.
       S.dawn = 1;
       S.gate = 1;
-      S.decoy = { ...S.decoy, visible: true, x: 0, z: 21, eyes: 0, collapse: 1 };
+      S.decoy = { ...S.decoy, visible: false };
       add("noob", "noob", { x: 0.4, z: 15.0, yaw: 0.05, face: face(t, 9, "smile"), armL: 0.1 });
       add("red", "red", { x: -2.6, z: 14.2, yaw: 0.9, face: "smile" });
       add("green", "green", { x: -3.7, z: 15.2, yaw: 0.7, face: "smile" });
@@ -368,13 +368,13 @@ export function stateAt(f: number): State {
       const appear = ss(W("twist", 5), W("twist", 8), t);
       const reach = ss(W("twist", 10), W("twist", 12) + 0.4, t);
       S.ghostShadow = {
-        pose: { x: 0.05, z: 14.25, yaw: 0.2, armL: 0.2 + reach * 1.0, armR: 0.25 + reach * 0.7, armRz: -reach * 0.3, headYaw: reach * -0.5, scale: 1.18 },
+        pose: { x: -0.75, z: 14.1, yaw: 0.2, armL: 0.2 + reach * 1.0, armR: 0.25 + reach * 0.7, armRz: -reach * 0.3, headYaw: reach * -0.5, scale: 1.18 },
         opacity: appear,
       };
       S.cam = camKeys(t, t0, [
         { t: t0, pos: [0.5, 2.0, 18.0], look: [0.4, 2.05, 15.0], fov: 34 },
         { t: W("twist", 2), pos: [0.5, 2.0, 17.6], look: [0.4, 2.05, 15.0], fov: 34 },
-        { t: W("twist", 6), pos: [3.6, 5.2, 17.6], look: [2.6, 0.2, 12.4], fov: 42 },
+        { t: W("twist", 6), pos: [0.8, 5.6, 20.0], look: [1.2, 0.3, 12.4], fov: 46 },
       ], 0.02);
       break;
     }
