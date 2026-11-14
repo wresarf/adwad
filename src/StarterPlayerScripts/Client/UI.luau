@@ -10,6 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local PetModelBuilder = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PetModelBuilder"))
+local FoodModelBuilder = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("FoodModelBuilder"))
 
 local UI = {}
 
@@ -413,6 +414,28 @@ function UI.petViewport(parent: Instance, rec: { species: string, material: stri
 	model.Parent = vp
 	local camera = Instance.new("Camera")
 	local cf, fov = PetModelBuilder.portraitCamera(height, width)
+	camera.FieldOfView = fov
+	camera.CFrame = cf
+	camera.Parent = vp
+	vp.CurrentCamera = camera
+	return vp
+end
+
+-- A ViewportFrame with a 3/4 product shot of one snack (FoodModelBuilder).
+function UI.foodViewport(parent: Instance, foodId: string, size: UDim2, pos: UDim2): ViewportFrame
+	local vp = UI.new("ViewportFrame", {
+		Name = "FoodView",
+		Size = size,
+		Position = pos,
+		BackgroundTransparency = 1,
+		Ambient = Color3.fromRGB(196, 186, 174),
+		LightColor = Color3.fromRGB(255, 248, 236),
+		LightDirection = Vector3.new(-0.6, -1, -0.8),
+		Parent = parent,
+	})
+	FoodModelBuilder.build(foodId, CFrame.new(), 1).Parent = vp
+	local camera = Instance.new("Camera")
+	local cf, fov = FoodModelBuilder.portraitCamera()
 	camera.FieldOfView = fov
 	camera.CFrame = cf
 	camera.Parent = vp

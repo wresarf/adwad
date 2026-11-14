@@ -8,7 +8,8 @@
 -- composition and catch overlaps, not as a pixel-accurate screenshot.
 --
 --   lune run tests/gui.luau <scenario> <out.svg> [width height touch]
--- Scenarios: hud, pets, shop, upgrades, store, eggs, hatch, catch, welcome, settings, index, help
+-- Scenarios: hud, charging, pets, shop, upgrades, store, eggs, hatch, fuse, catch, catchpreview,
+--            training, zone, away, welcome, settings, index, help
 
 local Runtime = require("./runtime")
 local Render3D = require("./render3d")
@@ -644,9 +645,18 @@ function Gui.build(placePath, scenario, viewport, touch)
 	elseif scenario == "fuse" then
 		hud:showHatch({ kind = "hatch", source = "fuse", pet = { species = "MeadowPup", material = "Gold", size = "Normal" }, rarity = "Uncommon", rarityIndex = 2, income = 3, fusions = 1 })
 	elseif scenario == "catch" then
-		hud:renderCard({ pet = { species = "Sandpup", material = "Gold", size = "Huge", equipped = true }, rarity = "Rare", distance = 344, zoneName = "Sizzle Dunes", sweetSpot = true, income = 42, newSpecies = true, discoveryReward = 120, tokens = 1, outcome = "kept" })
+		hud:renderCard({ pet = { species = "Sandpup", material = "Gold", size = "Huge", equipped = true }, rarity = "Rare", distance = 344, zoneName = "Sizzle Dunes", sweetSpot = true, income = 42, newSpecies = true, discoveryReward = 120, tokens = 1, outcome = "kept", framed = true })
 		hud.card.Visible = true
-		hud.card.Position = R.UDim2.new(1, -332, 0.5, -60)
+	elseif scenario == "catchpreview" then
+		hud:renderCard({ pet = { species = "CloverCat", material = "Diamond", size = "Colossal", equipped = false }, rarity = "Epic", rarityIndex = 4, distance = 182, zoneName = "Sunny Meadow", income = 210, outcome = "kept" })
+		hud.card.Visible = true
+	elseif scenario == "training" then
+		hud:setAway(true)
+		hud:setGym(true)
+		hud:setTraining(true, state.strength)
+		hud:setContext("Training · press Q or Stop to finish")
+	elseif scenario == "zone" then
+		hud:zoneBanner("Dunes")
 	elseif scenario == "away" then
 		hud:setAway(true)
 		hud:setContext("")
@@ -656,7 +666,7 @@ end
 
 -- CLI
 local process = require("@lune/process")
-local SCENARIOS = { hud = true, charging = true, pets = true, shop = true, upgrades = true, store = true, eggs = true, settings = true, index = true, help = true, welcome = true, hatch = true, fuse = true, catch = true, away = true }
+local SCENARIOS = { hud = true, charging = true, pets = true, shop = true, upgrades = true, store = true, eggs = true, settings = true, index = true, help = true, welcome = true, hatch = true, fuse = true, catch = true, catchpreview = true, training = true, zone = true, away = true }
 if SCENARIOS[process.args[1] or ""] and process.args[2] then
 	local fs = require("@lune/fs")
 	local w, h = tonumber(process.args[3]) or 1280, tonumber(process.args[4]) or 720

@@ -16,6 +16,7 @@ local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
 local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
 local EggConfig = require(Config:WaitForChild("EggConfig"))
+local MutationConfig = require(Config:WaitForChild("MutationConfig"))
 local GameMath = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GameMath"))
 local PetList = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("PetList"))
 
@@ -64,16 +65,6 @@ local function rarityColor(name: string?): Color3
 	return (GameConfig.RarityColors :: any)[name or "Common"] or C.Muted
 end
 
-local function mutationText(rec: any): string
-	local mut = {}
-	if rec.size and rec.size ~= "Normal" then
-		table.insert(mut, rec.size)
-	end
-	if rec.material and rec.material ~= "Normal" then
-		table.insert(mut, rec.material)
-	end
-	return if #mut > 0 then table.concat(mut, " ") .. " " else ""
-end
 
 local function isPress(input: InputObject): boolean
 	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
@@ -154,6 +145,18 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	self.weatherDot = weatherDot
 	self.weatherText = UI.text(weatherChip, "", UDim2.fromOffset(0, 30), nil, { size = T.Small, auto = Enum.AutomaticSize.X, wrap = false, order = 2 })
 	self.weatherChip = weatherChip
+
+	-- Zone banner: shown as a thrown snack crosses into a new biome (name + craving).
+	local banner = UI.surface(popups, UDim2.fromOffset(0, 58), UDim2.new(0.5, 0, 0, 98), C.Ivory, UI.Radius.l)
+	banner.AnchorPoint = Vector2.new(0.5, 0)
+	banner.AutomaticSize = Enum.AutomaticSize.X
+	banner.Visible = false
+	banner.Name = "ZoneBanner"
+	UI.padding(banner, 4, 22, 6, 22)
+	UI.list(banner, 0, false, Enum.HorizontalAlignment.Center)
+	self.zoneName = UI.text(banner, "", UDim2.fromOffset(0, 30), nil, { size = T.Title, font = UI.Display, auto = Enum.AutomaticSize.X, wrap = false, order = 1, align = Enum.TextXAlignment.Center })
+	self.zoneSub = UI.text(banner, "", UDim2.fromOffset(0, 18), nil, { size = T.Caption, color = C.Muted, auto = Enum.AutomaticSize.X, wrap = false, order = 2, align = Enum.TextXAlignment.Center })
+	self.zoneBannerFrame = banner
 
 	------------------------------------------------ quest card (top left)
 	local quest = UI.surface(root, UDim2.fromOffset(300, 0), UDim2.fromOffset(12, 8), C.Ivory)
@@ -284,12 +287,32 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 		UI.new("Frame", { Size = UDim2.new(0, 2, 1, 8), Position = UDim2.new(x, -1, 0, -4), BackgroundColor3 = C.LeafDark, BorderSizePixel = 0, ZIndex = 3, Parent = sweet })
 	end
 	self.sweetZone = sweet
+	-- Ten segments (readable without colour) and a white marker riding the charge.
+	for i = 1, 9 do
+		UI.new("Frame", { Name = "Tick", Size = UDim2.new(0, 2, 0.5, 0), Position = UDim2.new(i / 10, -1, 0.25, 0), BackgroundColor3 = C.Line, BackgroundTransparency = 0.2, BorderSizePixel = 0, ZIndex = 3, Parent = meter })
+	end
+	local marker = UI.new("Frame", { Name = "Marker", Size = UDim2.fromOffset(8, 34), Position = UDim2.new(0, -4, 0.5, -17), BackgroundColor3 = C.Paper, BorderSizePixel = 0, ZIndex = 5, Visible = false, Parent = meter })
+	UI.corner(marker, 4)
+	UI.stroke(marker, C.Charcoal, 2, 0.15)
+	self.meterMarker = marker
+	UI.new("UIGradient", { Color = ColorSequence.new(C.AmberSoft, C.Amber), Parent = fill })
 	self.sweetLabel = UI.text(meter, "Sweet", UDim2.new(1 - GameConfig.SweetSpotMin, 24, 0, 18), UDim2.new(GameConfig.SweetSpotMin, -12, 0, -20), { size = T.Caption, color = C.LeafDark, align = Enum.TextXAlignment.Center, font = UI.FontHeavy })
 	UI.textOutline(self.sweetLabel, 1)
 	self.sweetLabel.TextColor3 = C.Paper
 	self.meter = meter
-	self.meterCaption = UI.text(bottom, "", UDim2.fromOffset(440, 22), UDim2.new(0.5, -220, 0, 84), { size = T.Small, align = Enum.TextXAlignment.Center, color = C.Paper })
+	self.meterCaption = UI.text(bottom, "", UDim2.fromOffset(560, 22), UDim2.new(0.5, -280, 0, 84), { size = T.Small, align = Enum.TextXAlignment.Center, color = C.Paper, wrap = false })
 	UI.textOutline(self.meterCaption)
+
+	-- Training bar: replaces the throw meter while a training session runs. It shows the
+	-- real per-rep gain (GameMath.trainLevel) and how far the next level is.
+	local trainBar = UI.surface(bottom, UDim2.fromOffset(440, 46), UDim2.new(0.5, -220, 0, 44), C.Ivory, UI.Radius.m)
+	trainBar.Name = "TrainBar"
+	trainBar.Visible = false
+	self.trainLevelText = UI.text(trainBar, "", UDim2.new(1, -24, 0, 20), UDim2.fromOffset(12, 3), { size = T.Small, font = UI.FontHeavy, wrap = false })
+	local _, trainFill, trainBarText = UI.progressBar(trainBar, UDim2.new(1, -24, 0, 16), UDim2.fromOffset(12, 25), C.Teal)
+	self.trainFill = trainFill
+	self.trainBarText = trainBarText
+	self.trainBar = trainBar
 
 	-- Secondary: Train.
 	local trainBtn = UI.button(bottom, "Train", "secondary", UDim2.fromOffset(150, 66), UDim2.new(0.5, -270, 1, -70))
@@ -361,24 +384,43 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	UI.list(toastHolder, 6, false, Enum.HorizontalAlignment.Center)
 	self.toastHolder = toastHolder
 
-	------------------------------------------------ catch card (right)
-	local card = UI.surface(root, UDim2.fromOffset(320, 0), UDim2.new(1, 340, 0.5, -60), C.Ivory)
-	card.AutomaticSize = Enum.AutomaticSize.Y
-	card.Visible = false
-	UI.padding(card, 12)
+	------------------------------------------------ catch reveal (bottom centre)
+	-- Specimen first: the pet is framed in the world (or shown in the small preview when
+	-- it isn't), then material -> species -> size / rarity -> income, with an angled NEW
+	-- badge. Rare and new catches wait for a tap (or Space / Enter, or 6 s); the rest
+	-- dismiss themselves.
+	local card = UI.new("TextButton", { Name = "Reveal", Text = "", AutoButtonColor = false, BackgroundColor3 = C.Ivory, BackgroundTransparency = 0.04, BorderSizePixel = 0, Size = UDim2.fromOffset(420, 0), AutomaticSize = Enum.AutomaticSize.Y, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -216), Visible = false, ZIndex = 31, Parent = popups })
+	UI.corner(card, UI.Radius.l)
+	UI.stroke(card, C.Line, 1, 0.2)
+	UI.padding(card, 12, 18, 12, 18)
+	UI.list(card, 2, false, Enum.HorizontalAlignment.Center)
 	self.card = card
-	local viewHolder = UI.new("Frame", { BackgroundColor3 = C.Paper, Size = UDim2.fromOffset(96, 96), Parent = card })
+	local viewHolder = UI.new("Frame", { Name = "Preview", BackgroundColor3 = C.Paper, Size = UDim2.fromOffset(92, 84), LayoutOrder = 1, ZIndex = 32, Parent = card })
 	UI.corner(viewHolder, UI.Radius.m)
 	self.cardViewHolder = viewHolder
-	self.cardNew = UI.tag(viewHolder, "New", C.Amber, C.Charcoal, UDim2.fromOffset(-6, -8))
-	self.cardNew.ZIndex = 4
-	local info = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -108, 0, 0), Position = UDim2.fromOffset(108, 0), AutomaticSize = Enum.AutomaticSize.Y, Parent = card })
-	UI.list(info, 2)
-	self.cardRarity = UI.tag(info, "Common", C.Sand, C.Charcoal, nil, 1)
-	self.cardTitle = UI.text(info, "", UDim2.new(1, 0, 0, 0), nil, { size = T.Label, font = UI.FontHeavy, auto = Enum.AutomaticSize.Y, order = 2 })
-	self.cardInfo = UI.text(info, "", UDim2.new(1, 0, 0, 20), nil, { size = T.Caption, color = C.Muted, font = UI.FontMedium, order = 3 })
-	self.cardIncome = UI.text(info, "", UDim2.new(1, 0, 0, 22), nil, { size = T.Small, color = C.AmberDark, order = 4 })
-	self.cardFooter = UI.text(card, "", UDim2.new(1, 0, 0, 0), UDim2.fromOffset(0, 104), { size = T.Small, font = UI.FontMedium, auto = Enum.AutomaticSize.Y })
+	self.cardMaterial = UI.text(card, "", UDim2.new(1, 0, 0, 22), nil, { size = T.Label, font = UI.FontHeavy, align = Enum.TextXAlignment.Center, order = 2, z = 32, name = "Material" })
+	local nameRow = UI.new("Frame", { Name = "NameRow", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 44), LayoutOrder = 3, ZIndex = 32, Parent = card })
+	self.cardTitle = UI.text(nameRow, "", UDim2.new(1, -70, 1, 0), UDim2.fromOffset(35, 0), { size = 38, font = UI.Display, align = Enum.TextXAlignment.Center, wrap = false, z = 32, name = "Species" })
+	self.cardNew = UI.tag(nameRow, "NEW!", C.Amber, C.Charcoal, UDim2.new(1, 10, 0, -12))
+	self.cardNew.AnchorPoint = Vector2.new(1, 0)
+	self.cardNew.Rotation = -10
+	self.cardNew.ZIndex = 34
+	self.cardNew.TextSize = T.Label
+	self.cardNew.Font = UI.Display
+	local tagRow = UI.new("Frame", { Name = "Tags", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 26), LayoutOrder = 4, ZIndex = 32, Parent = card })
+	UI.list(tagRow, 6, true, Enum.HorizontalAlignment.Center)
+	self.cardRarity = UI.tag(tagRow, "Common", C.Sand, C.Charcoal, nil, 1)
+	self.cardRarity.ZIndex = 33
+	self.cardSize = UI.tag(tagRow, "", C.Paper, C.Charcoal, nil, 2)
+	self.cardSize.ZIndex = 33
+	self.cardInfo = UI.tag(tagRow, "", C.Paper, C.Muted, nil, 3)
+	self.cardInfo.ZIndex = 33
+	self.cardIncome = UI.text(card, "", UDim2.new(1, 0, 0, 30), nil, { size = T.Title, font = UI.FontHeavy, color = C.AmberDark, align = Enum.TextXAlignment.Center, order = 5, z = 32, name = "Income" })
+	self.cardFooter = UI.text(card, "", UDim2.new(1, 0, 0, 0), nil, { size = T.Small, font = UI.FontMedium, auto = Enum.AutomaticSize.Y, align = Enum.TextXAlignment.Center, order = 6, z = 32, name = "Footer" })
+	self.cardHint = UI.text(card, "Tap to continue", UDim2.new(1, 0, 0, 20), nil, { size = T.Caption, color = C.Muted, align = Enum.TextXAlignment.Center, order = 7, z = 32, name = "Hint" })
+	card.Activated:Connect(function()
+		self:dismissReveal()
+	end)
 
 	------------------------------------------------ reward banner (quests, zones, purchases)
 	local reward = UI.surface(popups, UDim2.fromOffset(380, 0), UDim2.new(0.5, -190, 0, 170), C.Ivory)
@@ -403,11 +445,19 @@ function Hud.new(playerGui: PlayerGui, ctx: Ctx)
 	self.hatchEgg = UI.new("Frame", { BackgroundColor3 = C.Paper, Size = UDim2.fromOffset(110, 140), Position = UDim2.new(0.5, -55, 0.5, -70), ZIndex = 37, Parent = self.hatchView })
 	UI.corner(self.hatchEgg, 55)
 	UI.stroke(self.hatchEgg, C.Line, 2)
-	self.hatchRarity = UI.tag(hatchCard, "", C.Sand, C.Charcoal, UDim2.new(0.5, 0, 0, 246))
+	-- Same hierarchy as the catch reveal: material, species, rarity / size, income, NEW.
+	self.hatchMaterial = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 22), UDim2.fromOffset(12, 240), { size = T.Label, font = UI.FontHeavy, align = Enum.TextXAlignment.Center, z = 36 })
+	self.hatchName = UI.text(hatchCard, "", UDim2.new(1, -96, 0, 36), UDim2.fromOffset(48, 262), { size = 32, font = UI.Display, align = Enum.TextXAlignment.Center, wrap = false, z = 36 })
+	self.hatchNew = UI.tag(hatchCard, "NEW!", C.Amber, C.Charcoal, UDim2.new(1, -14, 0, 252))
+	self.hatchNew.AnchorPoint = Vector2.new(1, 0)
+	self.hatchNew.Rotation = -10
+	self.hatchNew.Font = UI.Display
+	self.hatchNew.TextSize = T.Label
+	self.hatchNew.ZIndex = 38
+	self.hatchRarity = UI.tag(hatchCard, "", C.Sand, C.Charcoal, UDim2.new(0.5, 0, 0, 302))
 	self.hatchRarity.AnchorPoint = Vector2.new(0.5, 0)
 	self.hatchRarity.ZIndex = 36
-	self.hatchName = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 34), UDim2.fromOffset(12, 276), { size = T.Title, font = UI.Display, align = Enum.TextXAlignment.Center, z = 36 })
-	self.hatchInfo = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 22), UDim2.fromOffset(12, 312), { size = T.Small, color = C.Muted, align = Enum.TextXAlignment.Center, z = 36 })
+	self.hatchInfo = UI.text(hatchCard, "", UDim2.new(1, -24, 0, 26), UDim2.fromOffset(12, 330), { size = T.Label, font = UI.FontHeavy, color = C.AmberDark, align = Enum.TextXAlignment.Center, z = 36 })
 	local function raise(b: GuiObject)
 		b.ZIndex = 36
 		for _, d in b:GetDescendants() do
@@ -577,6 +627,17 @@ function Hud:setCompact(compact: boolean)
 	if compact then
 		self:setCravingsOpen(false)
 	end
+	-- Short screens: a tighter reveal so it fits between the wallet and the buttons.
+	local pad = self.card:FindFirstChildOfClass("UIPadding")
+	if pad then
+		pad.PaddingTop = UDim.new(0, if compact then 6 else 12)
+		pad.PaddingBottom = UDim.new(0, if compact then 6 else 12)
+	end
+	self.card.Size = UDim2.fromOffset(if compact then 380 else 420, 0)
+	self.card.Position = UDim2.new(0.5, 0, 1, if compact then -208 else -216)
+	self.cardTitle.Parent.Size = UDim2.new(1, 0, 0, if compact then 34 else 44)
+	self.cardIncome.Size = UDim2.new(1, 0, 0, if compact then 24 else 30)
+	self.cardMaterial.Size = UDim2.new(1, 0, 0, if compact then 18 else 22)
 end
 
 -- Bottom action cluster. On touch phones the secondary buttons get narrower and the
@@ -649,13 +710,17 @@ function Hud:update(state: any)
 	self.gemsLabel.Text = GameMath.formatNumber(state.gems or 0)
 	self.tokensLabel.Text = GameMath.formatNumber(state.pawTokens or 0)
 	self.trainSub.Text = "Strength " .. GameMath.formatNumber(state.strength or 0)
+	self.lastStrength = state.strength or 0
+	if self.training then
+		self:refreshTraining(self.lastStrength)
+	end
 	self.bestDistance = state.bestDistance or 0
 
-	local streak = state.streak or 0
-	self.comboChip.Visible = streak > 0
-	self.comboChip.Text = string.format("Combo x%s · streak %d", tostring(state.comboMult or 1), streak)
-
 	local food = FoodConfig.get(state.equippedFood) or FoodConfig.Foods[1]
+	self.luckFood = food.luck
+	self.luckStreak = state.streak or 0
+	self:refreshLuck()
+
 	self.foodName.Text = food.name
 	self.foodInfo.Text = string.format("%s %s · Change", FoodConfig.CravingIcons[food.craving] or "", food.craving)
 	self.foodDot.BackgroundColor3 = food.color
@@ -772,8 +837,31 @@ function Hud:refreshCravings()
 	self.cravingsTitle.Text = if matches > 0 then string.format("Cravings · %d want %s", matches, snack) else "Cravings · none want " .. snack
 end
 
+-- Luck chip: the mutation luck the server will use for this throw (GameMath.luckPreview),
+-- with the craving-match value next to it. Never a made-up multiplier.
+function Hud:refreshLuck()
+	local w = self.weather
+	local def = if w and w.active then GameConfig.getWeather(w.id) else nil
+	local l = GameMath.luckPreview(self.luckFood or 1, self.luckStreak or 0, if def then def.materialLuck else 1, if def then def.sizeLuck else 1, if def then def.cravingBonus else 1)
+	local base = math.max(l.base, l.sizeBase)
+	local matched = math.max(l.matched, l.sizeMatched)
+	self.luck = l
+	self.luckText = string.format("🍀 Luck x%s · x%s on a craving", Hud.fmtMult(base), Hud.fmtMult(matched))
+	local streak = self.luckStreak or 0
+	self.comboChip.Visible = streak > 0
+	self.comboChip.Text = string.format("Combo streak %d", streak)
+end
+
+function Hud.fmtMult(x: number): string
+	if math.abs(x - math.floor(x + 0.5)) < 0.005 then
+		return tostring(math.floor(x + 0.5))
+	end
+	return string.format("%.2f", x)
+end
+
 function Hud:setWeather(w: any)
 	self.weather = w
+	self:refreshLuck()
 	self:setCravings(w and w.cravings)
 	if w and w.active then
 		local def = GameConfig.getWeather(w.id)
@@ -805,8 +893,8 @@ function Hud:setAway(away: boolean)
 	if self.throwKey then
 		self.throwKey.Visible = not away
 	end
-	self.meter.Visible = not away
-	self.meterCaption.Visible = not away
+	self.meter.Visible = not away and not self.training
+	self.meterCaption.Visible = not away and not self.training
 end
 
 function Hud:setGym(inGym: boolean)
@@ -814,6 +902,10 @@ function Hud:setGym(inGym: boolean)
 		return
 	end
 	self.inGym = inGym
+	if self.training then
+		self:refreshTraining(self.lastStrength or 0)
+		return
+	end
 	UI.setButton(self.trainBtn, if inGym then "Train 2x" else "Train", if inGym then "reward" else "secondary")
 end
 
@@ -836,21 +928,27 @@ function Hud:tick(charge: number?, preview: string?)
 	local label = UI.buttonLabel(self.throwBtn)
 	if charge then
 		self.meterFill.Size = UDim2.new(charge, 0, 1, 0)
+		self.meterMarker.Visible = true
+		self.meterMarker.Position = UDim2.new(charge, -4, 0.5, -17)
 		local sweet = GameMath.isSweetSpot(charge)
 		self.meterFill.BackgroundColor3 = if sweet then C.Leaf else C.Amber
 		self.meterStroke.Color = if sweet then C.LeafDark else C.Line
 		self.sweetZone.BackgroundTransparency = if sweet then 0.1 else 0.45
 		self.sweetLabel.Text = if sweet then "Sweet ✓" else "Sweet"
-		self.meterCaption.Text = preview or ""
+		-- While charging: where it lands, plus the Sweet luck bonus once inside the zone.
+		local l = self.luck
+		self.meterCaption.Text = (preview or "") .. (if sweet and l then string.format(" · luck x%s", Hud.fmtMult(math.max(l.base, l.sizeBase) * l.sweet)) else "")
 		if label and not self.awayFromLine then
 			label.Text = "Release"
 		end
 	else
 		self.meterFill.Size = UDim2.new(0, 0, 1, 0)
+		self.meterMarker.Visible = false
 		self.meterStroke.Color = C.Line
 		self.sweetZone.BackgroundTransparency = 0.45
 		self.sweetLabel.Text = "Sweet"
-		self.meterCaption.Text = if (self.bestDistance or 0) > 0 then "Best " .. GameMath.formatNumber(self.bestDistance) .. " m" else ""
+		local best = if (self.bestDistance or 0) > 0 then "Best " .. GameMath.formatNumber(self.bestDistance) .. " m · " else ""
+		self.meterCaption.Text = best .. (self.luckText or "")
 		if label and not self.awayFromLine then
 			label.Text = "Throw"
 		end
@@ -1005,11 +1103,18 @@ function Hud:showHatch(payload: any)
 		UI.setButton(self.hatchAgain, string.format("Again · %d 🐾", egg.cost), "primary")
 	end
 	self.hatchOk.Position = if canAgain then UDim2.new(0.5, -178, 1, -66) else UDim2.new(0.5, -85, 1, -66)
-	self.hatchRarity.Text = payload.rarity or "Common"
+	self.hatchRarity.Text = (payload.rarity or "Common") .. (if rec.size and rec.size ~= "Normal" then " · " .. tostring(rec.size) else "")
 	self.hatchRarity.BackgroundColor3 = rc
 	self.hatchRarity.TextColor3 = UI.onColor(rc)
-	self.hatchName.Text = mutationText(rec) .. (if pet then pet.name else "Pet")
-	self.hatchInfo.Text = string.format("+%s coins/sec%s", GameMath.formatNumber(payload.income or 0), if payload.newSpecies then " · New species" else "")
+	local mat = MutationConfig.getMaterial(rec.material)
+	local hasMat = rec.material ~= nil and rec.material ~= "Normal"
+	self.hatchMaterial.Text = if hasMat then string.upper(tostring(rec.material)) else ""
+	self.hatchMaterial.TextColor3 = if mat and mat.color then mat.color:Lerp(C.Charcoal, 0.35) else C.Charcoal
+	self.hatchName.Text = if pet then pet.name else "Pet"
+	self.hatchName.TextSize = Hud.fitTitle(self.hatchName.Text, 300, 32, 22)
+	self.hatchInfo.Text = "+" .. GameMath.formatNumber(payload.income or 0) .. " coins/s"
+	self.hatchNew.Visible = false
+	self.hatchMaterial.Visible = false
 	self.hatchEgg.BackgroundColor3 = if egg then egg.shell else C.Paper
 	self.hatchEgg.Visible = payload.source == "egg"
 	self.hatchEgg.Rotation = 0
@@ -1050,6 +1155,8 @@ function Hud:showHatch(payload: any)
 		self.hatchName.Visible = true
 		self.hatchInfo.Visible = true
 		self.hatchRarity.Visible = true
+		self.hatchMaterial.Visible = hasMat
+		self.hatchNew.Visible = payload.newSpecies == true
 		UI.pop(view, 0.15)
 		if (payload.rarityIndex or 1) >= GameConfig.rarityIndex("Epic") then
 			UI.flash(self.gui, rc, 0.3)
@@ -1069,45 +1176,94 @@ function Hud:showCatch(payload: any)
 	task.spawn(function()
 		while #self.cardQueue > 0 do
 			local p = table.remove(self.cardQueue, 1)
+			local hold = Hud.revealHolds(p)
 			self:renderCard(p)
-			local card = self.card :: Frame
-			card.Position = UDim2.new(1, 340, 0.5, -60)
+			local card = self.card :: GuiObject
+			self.revealDismissed = false
 			card.Visible = true
-			UI.tween(card, 0.3, { Position = UDim2.new(1, -332, 0.5, -60) }, Enum.EasingStyle.Quart)
-			task.wait(if #self.cardQueue > 0 then 1.4 else 2.6)
-			UI.tween(card, 0.22, { Position = UDim2.new(1, 340, 0.5, -60) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-			task.wait(0.24)
+
+			if not UI.reducedMotion() then
+				UI.pop(card, if hold then 0.08 else 0.04)
+			end
+			-- Held reveals wait for a tap (max 6 s, never stuck); queued catches move faster.
+			local limit = if hold then 6 elseif #self.cardQueue > 0 then 1.3 else 2.6
+			local t0 = os.clock()
+			while os.clock() - t0 < limit and not self.revealDismissed do
+				task.wait(0.05)
+			end
 			card.Visible = false
+			-- Bring back what the compact reveal moved aside (unless a panel hides it anyway).
+			local open = self.panels and self.panels:isOpen()
+			self.weatherChip.Visible = not open or not self.compact
+			self.quest.Visible = not open
+			task.wait(0.12)
 		end
 		self.cardBusy = false
 	end)
+end
+
+-- A fixed type step that fits `text` on one line in `width` px (display font, roughly
+-- 0.58 em per character). Steps down in 2 px instead of scaling, never below `min`.
+function Hud.fitTitle(text: string, width: number, max: number, min: number): number
+	local size = max
+	local n = utf8.len(text) or #text
+	while size > min and n * size * 0.58 > width do
+		size -= 2
+	end
+	return size
+end
+
+-- New species and Epic+ catches wait for the player; everything else auto-dismisses.
+function Hud.revealHolds(p: any): boolean
+	return p.newSpecies == true or (p.rarityIndex or 1) >= GameConfig.rarityIndex("Epic")
+end
+
+function Hud:dismissReveal(): boolean
+	if self.card.Visible then
+		self.revealDismissed = true
+		return true
+	end
+	return false
 end
 
 function Hud:renderCard(p: any)
 	local rec = p.pet or {}
 	local pet = PetConfig.get(rec.species)
 	local rc = rarityColor(p.rarity)
-	self.cardTitle.Text = mutationText(rec) .. (if pet then pet.name else "Pet")
+	local mat = MutationConfig.getMaterial(rec.material)
+	-- 1. material (only when it is one), 2. species, 3. size / rarity / where, 4. income.
+	local hasMat = rec.material ~= nil and rec.material ~= "Normal"
+	self.cardMaterial.Visible = hasMat
+	self.cardMaterial.Text = if hasMat then string.upper(tostring(rec.material)) else ""
+	self.cardMaterial.TextColor3 = if mat and mat.color then mat.color:Lerp(C.Charcoal, 0.35) else C.Charcoal
+	self.cardTitle.Text = if pet then pet.name else "Pet"
+	self.cardTitle.TextSize = Hud.fitTitle(self.cardTitle.Text, 350, 38, 24)
 	self.cardRarity.Text = p.rarity or "Common"
 	self.cardRarity.BackgroundColor3 = rc
 	self.cardRarity.TextColor3 = UI.onColor(rc)
+	local hasSize = rec.size ~= nil and rec.size ~= "Normal"
+	self.cardSize.Visible = hasSize
+	self.cardSize.Text = if hasSize then tostring(rec.size) else ""
+	self.cardInfo.Text = string.format("%s m · %s%s", GameMath.formatNumber(p.distance or 0), p.zoneName or BiomeConfig.zoneName(p.zone), if p.sweetSpot then " · Sweet" else "")
+	-- The world camera frames the pet after a followed throw; otherwise show a preview.
+	local preview = p.framed ~= true
+	self.cardViewHolder.Visible = preview
 	for _, child in self.cardViewHolder:GetChildren() do
 		if child:IsA("ViewportFrame") then
 			child:Destroy()
 		end
 	end
-	if pet then
+	if pet and preview then
 		UI.petViewport(self.cardViewHolder :: any, rec, UDim2.fromScale(1, 1), UDim2.new())
 	end
 	self.cardNew.Visible = p.newSpecies == true
-	self.cardInfo.Text = string.format("%s m · %s%s", GameMath.formatNumber(p.distance or 0), p.zoneName or BiomeConfig.zoneName(p.zone), if p.sweetSpot then " · Sweet" else "")
-	self.cardIncome.Text = "+" .. GameMath.formatNumber(p.income or 0) .. " coins/sec"
+	self.cardIncome.Text = "+" .. GameMath.formatNumber(p.income or 0) .. " coins/s"
 	local extras = {}
 	if (p.bonusCoins or 0) > 0 then
 		table.insert(extras, "craving +" .. GameMath.formatNumber(p.bonusCoins))
 	end
 	if (p.discoveryReward or 0) > 0 then
-		table.insert(extras, "new species +" .. GameMath.formatNumber(p.discoveryReward))
+		table.insert(extras, "first catch +" .. GameMath.formatNumber(p.discoveryReward))
 	end
 	if (p.tokens or 0) > 0 then
 		table.insert(extras, string.format("+%d 🐾", p.tokens))
@@ -1120,13 +1276,71 @@ function Hud:renderCard(p: any)
 		status = "Backpack full · sold for " .. GameMath.formatNumber(p.soldFor or 0)
 		self.cardFooter.TextColor3 = C.Terracotta
 	elseif rec.equipped then
-		status = "On your plot"
+		status = "Placed on your plot"
 		self.cardFooter.TextColor3 = C.LeafDark
 	else
-		status = "In your backpack · try Equip best"
+		status = "In your backpack · Equip best to place it"
 		self.cardFooter.TextColor3 = C.Muted
 	end
-	self.cardFooter.Text = status .. (if #extras > 0 then "\n" .. table.concat(extras, " · ") else "")
+	local sep = if self.compact then " · " else "\n"
+	self.cardFooter.Text = status .. (if #extras > 0 then sep .. table.concat(extras, " · ") else "")
+	self.cardTitle.TextSize = Hud.fitTitle(self.cardTitle.Text, if self.compact then 310 else 350, if self.compact then 30 else 38, 22)
+	self.cardHint.Visible = Hud.revealHolds(p)
+	if self.compact then
+		-- Phones: the reveal needs the room of the weather chip and the quest card.
+		self.weatherChip.Visible = false
+		self.quest.Visible = false
+	end
+	self.cardHint.Text = if UserInputService.TouchEnabled then "Tap to continue" else "Click or press Space to continue"
+end
+
+-- Biome name + its craving as a thrown snack crosses into it.
+function Hud:zoneBanner(zoneId: string)
+	local frame = self.zoneBannerFrame :: GuiObject
+	local craving = self.cravingMap and self.cravingMap[zoneId]
+	self.zoneName.Text = BiomeConfig.zoneName(zoneId)
+	if craving then
+		local match = craving == self.equippedCraving
+		self.zoneSub.Text = string.format("craves %s %s%s", FoodConfig.CravingIcons[craving] or "", craving, if match then " · your snack ✓" else "")
+		self.zoneSub.TextColor3 = if match then C.LeafDark else C.Muted
+	else
+		self.zoneSub.Text = ""
+	end
+	frame.Visible = true
+	if not UI.reducedMotion() then
+		UI.pop(frame, 0.06)
+	end
+	local token = (self.zoneToken or 0) + 1
+	self.zoneToken = token
+	task.delay(1.4, function()
+		if self.zoneToken == token then
+			frame.Visible = false
+		end
+	end)
+end
+
+-- Training session HUD: the Train button becomes Stop and the bar shows the level.
+function Hud:setTraining(active: boolean, strength: number?)
+	self.training = active
+	self.trainBar.Visible = active
+	self.meter.Visible = not active and not self.awayFromLine
+	self.meterCaption.Visible = not active and not self.awayFromLine
+	if active then
+		UI.setButton(self.trainBtn, "Stop", "danger")
+		self.trainSub.TextColor3 = C.OnColor
+	else
+		UI.setButton(self.trainBtn, if self.inGym then "Train 2x" else "Train", if self.inGym then "reward" else "secondary")
+		self.trainSub.TextColor3 = C.Muted
+	end
+	self:refreshTraining(strength or 0)
+end
+
+function Hud:refreshTraining(strength: number)
+	local gain, prevAt, nextAt = GameMath.trainLevel(strength)
+	local mult = if self.inGym then GameConfig.GymMultiplier else 1
+	self.trainLevelText.Text = string.format("Training level %d · +%d strength per rep%s", gain, gain * mult, if mult > 1 then " (Gym 2x)" else "")
+	UI.setProgress(self.trainFill, (strength - prevAt) / math.max(nextAt - prevAt, 1))
+	self.trainBarText.Text = string.format("%s / %s", GameMath.formatNumber(strength), GameMath.formatNumber(nextAt))
 end
 
 function Hud:setCutscene(active: boolean, title: string?, sub: string?)

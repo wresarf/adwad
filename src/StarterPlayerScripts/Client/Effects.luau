@@ -25,8 +25,10 @@ local GameConfig = require(Config:WaitForChild("GameConfig"))
 local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local PetConfig = require(Config:WaitForChild("PetConfig"))
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
+local MutationConfig = require(Config:WaitForChild("MutationConfig"))
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local PetModelBuilder = require(Shared:WaitForChild("PetModelBuilder"))
+local FoodModelBuilder = require(Shared:WaitForChild("FoodModelBuilder"))
 local GameMath = require(Shared:WaitForChild("GameMath"))
 
 -- Plays a sound cue if the client wired a Sound player in (absent in headless tools).
@@ -461,12 +463,13 @@ end
 
 ------------------------------------------------------------------ snack + small effects
 
-function Effects:_foodPart(parent: Instance, foodId: string?, withTrail: boolean): Part
+-- The snack model (FoodModelBuilder rig): an anchored core with its details welded on,
+-- so setting the core's CFrame moves the whole snack.
+function Effects:_foodPart(parent: Instance, foodId: string?, withTrail: boolean, scale: number?): Part
 	local food = FoodConfig.get(foodId) or FoodConfig.Foods[1]
-	local shape = if food.shape == "Block" then Enum.PartType.Block elseif food.shape == "Cylinder" then Enum.PartType.Cylinder else Enum.PartType.Ball
-	local size = if shape == Enum.PartType.Cylinder then Vector3.new(2.6, 1.3, 1.3) else Vector3.new(1.6, 1.6, 1.6)
-	local p = localPart(parent, shape, size, CFrame.new(), food.color, Enum.Material.SmoothPlastic)
+	local p = FoodModelBuilder.buildRig(food.id, scale or 0.95)
 	p.Name = "FlyingFood"
+	p.Parent = parent
 	if withTrail then
 		local a0 = Instance.new("Attachment")
 		a0.Position = Vector3.new(0, 0.55, 0)
@@ -686,7 +689,9 @@ function Effects:_spawnCaughtPet(payload: any, ground: Vector3, parent: Instance
 	if type(rec) ~= "table" or not self.alive then
 		return nil
 	end
-	local model, height = PetModelBuilder.build(rec.species, rec.material, rec.size, CFrame.new(ground) * CFrame.Angles(0, math.pi, 0))
+	-- Pets are authored facing -Z: the thrower and the follow camera are on the -Z side,
+	-- so the pet faces back up the lane, turned a little toward the camera's 3/4 view.
+	local model, height = PetModelBuilder.build(rec.species, rec.material, rec.size, CFrame.new(ground) * CFrame.Angles(0, math.rad(-25), 0))
 	model.Parent = parent or self.folder
 	local gui: BillboardGui? = nil
 	local primary = model.PrimaryPart
@@ -994,13 +999,9 @@ function Effects:setCharging(charge: number?, foodId: string?)
 	local freq = 5 + 9 * charge
 	local amp = if reduced then 0 else 0.08 + 0.22 * charge
 	local sq = if reduced then 0 else (0.03 + 0.1 * charge) * math.sin(t * freq * 2)
-	local grow = 0.85 + charge * 0.35
-	if part.Shape == Enum.PartType.Ball then
-		part.Size = h.base * grow * (1 + sq * 0.6)
-	else
-		part.Size = h.base * grow * Vector3.new(1 + sq * 0.5, 1 - sq, 1 + sq * 0.5)
-	end
-	part.CFrame = hand.CFrame * CFrame.new(0, -hand.Size.Y / 2 - 0.45, 0.35 * charge) * CFrame.Angles(math.sin(t * freq) * amp, 0, math.cos(t * freq * 0.7) * amp * 0.6)
+	-- The rig can't be resized (its details are welded), so the build-up reads as a
+	-- quickening wobble plus a small bob that pulls back toward the shoulder.
+	part.CFrame = hand.CFrame * CFrame.new(0, -hand.Size.Y / 2 - 0.55 + sq, 0.35 * charge) * CFrame.Angles(math.sin(t * freq) * amp, if reduced then 0 else t * (1 + 4 * charge), math.cos(t * freq * 0.7) * amp * 0.6)
 	h.motes.Rate = if reduced then 0 else 3 + 26 * charge * charge
 
 	if sweet ~= h.sweet then
@@ -1216,9 +1217,18 @@ function Effects:_flight(payload: any, follow: boolean)
 	end
 	local start = os.clock()
 	local landed = false
+	local zoneNow = BiomeConfig.biomeAtDistance(math.max(startPos.Z, 0)).id
 	local stopFlight = bind(seq, function(dt)
 		local t = math.min((os.clock() - start) / duration, 1)
 		local pos = arcPoint(startPos, landing, height, t)
+		-- Name each biome as the player's own snack flies into it.
+		if payload.manual == true then
+			local z = BiomeConfig.biomeAtDistance(math.max(pos.Z, 0)).id
+			if z ~= zoneNow then
+				zoneNow = z
+				self.hud:zoneBanner(z)
+			end
+		end
 		food.CFrame = CFrame.new(pos) * CFrame.Angles(t * 25, t * 17, 0)
 		-- A soft ground shadow makes the arc readable from any angle.
 		local alt = math.max(pos.Y, 0)
@@ -1239,30 +1249,45 @@ function Effects:_flight(payload: any, follow: boolean)
 			task.wait()
 		end
 		stopFlight()
-		food.Transparency = 1
+		FoodModelBuilder.setVisible(food, false)
 		shadow.Transparency = 1
 		self:_land(ground, payload)
-		if not seq.cancelled and camera then
-			local target = ground + Vector3.new(0, 3, 0)
-			if self:_isMilestone(payload) then
-				local orbitStart = os.clock()
-				bind(seq, function(dt)
-					local a = (os.clock() - orbitStart) * 0.6
-					local goal = CFrame.lookAt(target + Vector3.new(math.sin(a) * 22, 10, -math.cos(a) * 22), target)
-					camera.CFrame = camera.CFrame:Lerp(goal, 1 - math.exp(-dt * 8))
-				end)
-				waitFor(seq, 1.4)
-			else
-				-- Calm catch: ease to a resting view of the landing, then hand back.
-				bind(seq, function(dt)
-					local goal = CFrame.lookAt(target + Vector3.new(0, 11, -26), target)
-					camera.CFrame = camera.CFrame:Lerp(goal, 1 - math.exp(-dt * 6))
-				end)
-				waitFor(seq, 0.7)
-			end
+		local framed = not seq.cancelled and camera ~= nil
+		payload.framed = framed
+		if framed and camera then
+			-- Specimen shot: a low 3/4 view sized to the pet, so its silhouette fills the
+			-- middle of the frame and the reveal card sits underneath. Milestones drift a
+			-- little around it; calm catches hold still and hand back sooner.
+			local rec = payload.pet or {}
+			local size = MutationConfig.getSize(rec.size)
+			local k = if size then size.scale else 1
+			local target, goal = Effects.specimenShot(ground, k)
+			local milestone = self:_isMilestone(payload)
+			local shotStart = os.clock()
+			bind(seq, function(dt)
+				local g = goal
+				if milestone and not self:_reduced() then
+					local a = (os.clock() - shotStart) * 0.25
+					g = CFrame.lookAt(target + CFrame.Angles(0, a, 0):VectorToWorldSpace(goal.Position - target), target)
+				end
+				camera.CFrame = camera.CFrame:Lerp(g, 1 - math.exp(-dt * 7))
+			end)
+			self.hud:showCatch(payload)
+			waitFor(seq, if milestone or payload.newSpecies then 2.2 else 1.1)
+		else
+			self.hud:showCatch(payload)
 		end
 		self:_finish(seq)
 	end)
+end
+
+-- Camera for the post-landing specimen shot: target point and eye CFrame for a pet of
+-- size scale `k` standing at `ground` and facing back up the lane (-Z).
+function Effects.specimenShot(ground: Vector3, k: number): (Vector3, CFrame)
+	local target = ground + Vector3.new(0, 1.6 * k + 0.6, 0)
+	local d = 9 + 5.5 * k
+	local eye = target + Vector3.new(d * 0.42, d * 0.22, -d)
+	return target, CFrame.lookAt(eye, target)
 end
 
 ------------------------------------------------------------------ cutscenes
@@ -1415,8 +1440,7 @@ function Effects:_cutscene(payload: any): boolean
 	local launchFrom = Vector3.new(0, 6, 0)
 	local launchTo = Vector3.new(0, 900, 1400)
 	self:_dust(Vector3.new(0, 0, -4), 1.6, Palette.Sand)
-	local food: Part = self:_foodPart(scene, payload.foodId, true)
-	food.Size = food.Size * 2
+	local food: Part = self:_foodPart(scene, payload.foodId, true, 1.9)
 	food.CFrame = CFrame.new(launchFrom)
 	local foodTrail = food:FindFirstChildOfClass("Trail")
 	local t0 = os.clock()
@@ -1469,7 +1493,7 @@ function Effects:_cutscene(payload: any): boolean
 	if not waitFor(seq, 0.65) then
 		return false
 	end
-	food.Transparency = 1
+	FoodModelBuilder.setVisible(food, false)
 	local dustTint = if kind == "moon" then Color3.fromRGB(206, 200, 188) else Palette.Stone
 	self:_dust(petPos, 1.3, dustTint)
 	self:_groundRing(petPos, Palette.Ivory:Lerp(rarityColor(payload.rarity), 0.5), 1.2)
@@ -1510,13 +1534,14 @@ function Effects:playCatch(payload: any)
 	end
 	local follow = showFx and not self:_reduced() and payload.manual == true and (payload.distance or 0) > 120 and not self:isPlaying()
 	if payload.manual or not self:isPlaying() then
+		-- The reveal waits for the landing (no spoiler while the snack is in the air).
 		self:_flight(payload, follow)
 	else
 		task.delay(0.8, function()
 			self:_celebrate(payload, nil)
 		end)
+		self.hud:showCatch(payload)
 	end
-	self.hud:showCatch(payload)
 end
 
 ------------------------------------------------------------------ weather

@@ -1510,7 +1510,7 @@ end)
 
 test("design references don't use the excluded video", function()
 	local fs = require("@lune/fs")
-	for _, path in { "docs/DESIGN_AUDIT.md", "docs/ART_AND_AUDIO.md", "docs/REFERENCES.md", "README.md" } do
+	for _, path in { "docs/DESIGN_AUDIT.md", "docs/ART_AND_AUDIO.md", "docs/REFERENCES.md", "docs/SCREENSHOT_AUDIT.md", "README.md" } do
 		if fs.isFile(path) then
 			local text = fs.readFile(path)
 			ok(not text:find("r157nlkQwz4", 1, true) and not text:find("youtu", 1, true), path .. " references the excluded video")
@@ -1547,6 +1547,322 @@ test("UI: readable fixed type, sufficient contrast, reduced motion", function()
 	UI.setReduceMotion(false)
 	ok(RemoteContract.Settings.ReduceMotion == "boolean")
 	ok(SP.StarterPlayerScripts.Client.Effects.Source:find("ReducedMotionEnabled", 1, true), "effects honour the OS setting")
+end)
+
+print("\n[v7: screenshot-driven pass]")
+local FoodModelBuilder = req(RS.Shared.FoodModelBuilder)
+test("snack models: eight distinct multi-part shapes, safe parts, rig moves as one", function()
+	local signatures = {}
+	for _, food in FoodConfig.Foods do
+		local model = FoodModelBuilder.build(food.id, R.CFrame.new(), 1)
+		local parts = {}
+		local lo, hi = R.Vector3.new(1e9, 1e9, 1e9), R.Vector3.new(-1e9, -1e9, -1e9)
+		for _, d in model:GetDescendants() do
+			if d:IsA("BasePart") then
+				table.insert(parts, d)
+				ok(d.Anchored and not d.CanCollide and not d.CanQuery and not d.CanTouch, food.id .. ": unsafe part " .. d.Name)
+				local p, h = d.CFrame.Position, d.Size / 2
+				lo = R.Vector3.new(math.min(lo.X, p.X - h.X), math.min(lo.Y, p.Y - h.Y), math.min(lo.Z, p.Z - h.Z))
+				hi = R.Vector3.new(math.max(hi.X, p.X + h.X), math.max(hi.Y, p.Y + h.Y), math.max(hi.Z, p.Z + h.Z))
+			end
+		end
+		ok(#parts >= 4, food.id .. " has only " .. #parts .. " parts")
+		local ext = hi - lo
+		ok(math.max(ext.X, ext.Y, ext.Z) <= 3.2, food.id .. " is too big for the hand / card")
+		eq(model.PrimaryPart and model.PrimaryPart.Name, "Core", food.id .. " core")
+		-- Silhouette signature: part count + rounded extents. No two snacks share one.
+		local sig = string.format("%d:%.1f:%.1f:%.1f", #parts, ext.X, ext.Y, ext.Z)
+		ok(not signatures[sig], food.id .. " looks like " .. tostring(signatures[sig]))
+		signatures[sig] = food.id
+		local core = FoodModelBuilder.buildRig(food.id, 1)
+		ok(core.Anchored, "rig core anchored")
+		for _, d in core:GetDescendants() do
+			if d:IsA("BasePart") then
+				ok(not d.Anchored, "rig detail must follow the core")
+				local w = d:FindFirstChildOfClass("WeldConstraint")
+				ok(w and w.Part0 == core and w.Part1 == d, food.id .. ": " .. d.Name .. " not welded to the core")
+			end
+		end
+		FoodModelBuilder.setVisible(core, false)
+		for _, d in core:GetDescendants() do
+			if d:IsA("BasePart") then
+				eq(d.LocalTransparencyModifier, 1, "hidden")
+			end
+		end
+	end
+	local src = RS.Shared.FoodModelBuilder.Source
+	ok(not src:find("rbxassetid", 1, true) and not src:find("MeshId", 1, true), "no external assets")
+	ok(SP.StarterPlayerScripts.Client.Effects.Source:find("FoodModelBuilder.buildRig", 1, true), "held/flying snack uses the model")
+end)
+
+test("snack shop: product cards with 3D previews, clear states, no clipped cards", function()
+	local Gui = require("./gui")
+	local Panels = req(SP.StarterPlayerScripts.Client.Panels)
+	for _, c in { { 1280, 720 }, { 844, 390 }, { 1920, 1080 }, { 800, 600 } } do
+		local vp = R.Vector2.new(c[1], c[2])
+		local built = Gui.build(placePath, "shop", vp, c[1] < 1000)
+		local panels = built.hud.panels
+		local rects = Gui.rects(built.playerGui, vp)
+		local shell = rects[panels.shells.Shop.frame]
+		ok(shell, "shop laid out")
+		local states = {}
+		for id, r in panels.shopRows do
+			local cr = rects[r.row]
+			ok(cr, id .. " card laid out")
+			ok(cr.x >= shell.x - 0.5 and cr.x + cr.w <= shell.x + shell.w + 0.5, string.format("%dx%d: %s card clipped at the panel edge", c[1], c[2], id))
+			ok(r.art:FindFirstChild("FoodView") and r.art.FoodView:IsA("ViewportFrame"), id .. " has a 3D preview")
+			local label = r.button.Face.Label.Text
+			states[id] = label
+			ok(r.button.Size.Y.Offset >= 40, id .. " button too small")
+		end
+		eq(states.ChiliPop, "Equipped ✓", "equipped state")
+		eq(states.BerryBite, "Equip", "owned state")
+		ok(states.StarCookie:find("🔒", 1, true), "locked state shows the price")
+		ok(panels.shopRows.ChiliPop.equippedTag.Visible and not panels.shopRows.BerryBite.equippedTag.Visible, "equipped tag")
+	end
+	local full = Panels.snackGrid(780, 540)
+	eq(full.cols, 4, "four columns on a full panel")
+	ok(full.cols * full.cellW + (full.cols - 1) * 12 <= 780 - 50, "cells fit the body")
+	local narrow = Panels.snackGrid(600, 400)
+	ok(narrow.cols >= 3 and narrow.compact, "narrow / short panels: 3+ columns, compact cards")
+end)
+
+test("panels: tinted header band, distinct close button, capacity and Equip best", function()
+	local Gui = require("./gui")
+	local vp = R.Vector2.new(1280, 720)
+	local built = Gui.build(placePath, "pets", vp, false)
+	local panels = built.hud.panels
+	for key, frame in panels.frames do
+		ok(frame:FindFirstChild("Header"), key .. " header band")
+		local close = frame:FindFirstChild("Close")
+		ok(close and close:GetAttribute("Style") == "danger", key .. " close button stands out")
+	end
+	local bal = panels.shells.Pets.balance
+	ok(bal.Visible and bal.Text == "🎒 9 / 150", "capacity pill: " .. bal.Text)
+	local rects = Gui.rects(built.playerGui, vp)
+	local eb, sheet, frame = rects[panels.equipBestButton], rects[panels.sheet], rects[panels.frames.Pets]
+	ok(eb and eb.h >= 50, "Equip best is a large target")
+	ok(eb.y >= sheet.y + sheet.h - 0.5, "Equip best sits under the sheet, not over it")
+	ok(eb.y + eb.h <= frame.y + frame.h, "Equip best inside the panel")
+	-- Full backpack turns the pill warm.
+	local st = built.state
+	local many = {}
+	for i = 1, st.maxPets do
+		many[i] = { uid = "x" .. i, species = "MeadowPup", material = "Normal", size = "Normal" }
+	end
+	st.pets = many
+	panels:refreshPets(st)
+	eq(bal.BackgroundColor3, req(SP.StarterPlayerScripts.Client.UI).Colors.TerracottaSoft, "full backpack warning")
+end)
+
+test("luck HUD uses the server's throw formula (no invented multipliers)", function()
+	for _, w in { { 1, 1, 1 }, { 3, 1, 1 }, { 1, 4, 1 }, { 1, 1, 2 } } do
+		for _, streak in { 0, 1, 3, 9 } do
+			for _, food in FoodConfig.Foods do
+				local l = GameMath.luckPreview(food.luck, streak, w[2], w[1], w[3])
+				local base = { strength = 100, foodPower = food.power, foodLuck = food.luck, charge = 0.5, allowSweetSpot = false, streak = streak, weatherSizeLuck = w[1], weatherMaterialLuck = w[2], weatherCravingBonus = w[3], rng = seqRng(7) }
+				local miss = table.clone(base)
+				miss.foodCraving = food.craving
+				miss.zoneCravings = {}
+				for _, z in BiomeConfig.allCravingZones() do
+					miss.zoneCravings[z] = if food.craving == "Berry" then "Meat" else "Berry"
+				end
+				local hit = table.clone(miss)
+				hit.zoneCravings = {}
+				for _, z in BiomeConfig.allCravingZones() do
+					hit.zoneCravings[z] = food.craving
+				end
+				local a, b = GameMath.computeThrow(miss), GameMath.computeThrow(hit)
+				near(l.base, a.materialLuck, 1e-9, "miss material luck")
+				near(l.sizeBase, a.sizeLuck, 1e-9, "miss size luck")
+				near(l.matched, b.materialLuck, 1e-9, "match material luck")
+				near(l.sizeMatched, b.sizeLuck, 1e-9, "match size luck")
+			end
+		end
+	end
+	eq(GameMath.luckPreview(1, 0, 1, 1, 1).sweet, GameConfig.SweetSpotLuckMult)
+	-- Training level boundaries follow trainGain exactly.
+	for _, s in { 0, 1, 624, 625, 2499, 2500, 100000 } do
+		local gain, prevAt, nextAt = GameMath.trainLevel(s)
+		eq(gain, GameMath.trainGain(s), "gain at " .. s)
+		ok(s >= prevAt and s < nextAt, "level bounds at " .. s)
+		eq(GameMath.trainGain(nextAt), gain + 1, "next level at " .. nextAt)
+	end
+	local hudSrc = SP.StarterPlayerScripts.Client.Hud.Source
+	ok(hudSrc:find("GameMath.luckPreview(", 1, true), "HUD luck comes from GameMath")
+end)
+
+test("catch reveal: material, species, size, income, NEW; fits; holds only when it matters", function()
+	local Gui = require("./gui")
+	local Hud = req(SP.StarterPlayerScripts.Client.Hud)
+	for _, c in { { 1280, 720, false }, { 844, 390, true }, { 667, 375, true }, { 1920, 1080, false } } do
+		local vp = R.Vector2.new(c[1], c[2])
+		local built = Gui.build(placePath, "catch", vp, c[3])
+		local hud = built.hud
+		local rects = Gui.rects(built.playerGui, vp)
+		local card = rects[hud.card]
+		ok(card and card.y >= 0 and card.y + card.h <= c[2] and card.x >= 0 and card.x + card.w <= c[1], string.format("%dx%d: reveal off screen", c[1], c[2]))
+		for _, name in { "throwBtn", "trainBtn", "foodChip", "quest", "wallet" } do
+			local r = rects[hud[name]]
+			if r then
+				local overlap = card.x < r.x + r.w - 1 and r.x < card.x + card.w - 1 and card.y < r.y + r.h - 1 and r.y < card.y + card.h - 1
+				ok(not overlap, string.format("%dx%d: reveal covers %s", c[1], c[2], name))
+			end
+		end
+		eq(hud.cardMaterial.Text, "GOLD", "material line first")
+		eq(hud.cardTitle.Text, "Sandpup", "species on its own line")
+		ok(hud.cardSize.Visible and hud.cardSize.Text == "Huge", "size tag")
+		ok(hud.cardNew.Visible and hud.cardNew.Rotation ~= 0, "angled NEW badge")
+		ok(not hud.cardViewHolder.Visible, "framed catches don't repeat the pet in a preview")
+		ok(hud:dismissReveal(), "a visible reveal can be dismissed")
+	end
+	for _, pet in PetConfig.Pets do
+		local size = Hud.fitTitle(pet.name, 350, 38, 24)
+		ok((utf8.len(pet.name) or #pet.name) * size * 0.58 <= 350 or size == 24, pet.name .. " does not fit")
+	end
+	ok(Hud.revealHolds({ newSpecies = true }) and Hud.revealHolds({ rarityIndex = GameConfig.rarityIndex("Epic") }), "new and Epic+ wait")
+	ok(not Hud.revealHolds({ rarityIndex = 1 }), "common catches auto-dismiss")
+	local hudSrc = SP.StarterPlayerScripts.Client.Hud.Source
+	ok(hudSrc:find("local limit = if hold then 6", 1, true), "held reveals still time out")
+	ok(clientSrc:find("if hud and hud:dismissReveal() then", 1, true), "Space / Enter / Skip dismiss it")
+	local fx = SP.StarterPlayerScripts.Client.Effects.Source
+	ok(fx:find("-- The reveal waits for the landing", 1, true), "no spoiler before the landing")
+	ok(not fx:find("CFrame.new(ground) * CFrame.Angles(0, math.pi, 0)", 1, true), "caught pets face the camera, not away")
+end)
+
+test("specimen shot: frames the pet's face, scales with size, restores via the sequence", function()
+	local Effects = req(SP.StarterPlayerScripts.Client.Effects)
+	local ground = R.Vector3.new(10, 0, 400)
+	local lastD = 0
+	for _, k in { 1, 1.35, 2.05, 3 } do
+		local target, cf = Effects.specimenShot(ground, k)
+		local eye = cf.Position
+		ok(eye.Z < ground.Z, "camera on the pet's face side (-Z)")
+		ok(target.Y > ground.Y, "aims at the body, not the feet")
+		local d = (eye - target).Magnitude
+		ok(d > lastD, "bigger pets get a wider shot")
+		lastD = d
+		ok(cf.LookVector:Dot((target - eye).Unit) > 0.999, "looks at the pet")
+	end
+	-- Pets are authored facing -Z (portraitCamera looks from -Z).
+	local PMB = req(RS.Shared.PetModelBuilder)
+	local pcf = PMB.portraitCamera(4, 4)
+	ok(pcf.Position.Z < 0, "pet faces -Z")
+	local fx = SP.StarterPlayerScripts.Client.Effects.Source
+	ok(fx:find("local camera = if follow then takeCamera(seq) else nil", 1, true), "camera taken through the sequence (restored on skip/finish)")
+end)
+
+test("training pose: applies on R15 and R6 and restores every joint exactly", function()
+	local TrainPose = req(SP.StarterPlayerScripts.Client.TrainPose)
+	local function rig(r15)
+		local char = R.Instance.new("Model")
+		local hum = R.Instance.new("Humanoid")
+		hum.RigType = if r15 then R.Enum.HumanoidRigType.R15 else R.Enum.HumanoidRigType.R6
+		hum.Parent = char
+		local joints = if r15 then { { "RightUpperArm", "RightShoulder" }, { "LeftUpperArm", "LeftShoulder" }, { "RightLowerArm", "RightElbow" }, { "LeftLowerArm", "LeftElbow" } } else { { "Torso", "Right Shoulder" }, { "Torso", "Left Shoulder" } }
+		local motors = {}
+		for i, j in joints do
+			local part = char:FindFirstChild(j[1]) or R.Instance.new("Part")
+			part.Name = j[1]
+			part.Parent = char
+			local m = R.Instance.new("Motor6D")
+			m.Name = j[2]
+			m.C0 = R.CFrame.new(i * 0.5, 0.5, 0) * R.CFrame.Angles(0, if r15 then 0 else math.pi / 2, 0)
+			m.Parent = part
+			motors[i] = { m = m, base = m.C0 }
+		end
+		return char, motors
+	end
+	for _, r15 in { true, false } do
+		local char, motors = rig(r15)
+		local pose = TrainPose.new(char)
+		eq(#pose.joints, #motors, "all arm joints found")
+		pose:apply(0.5, 1)
+		for _, mo in motors do
+			ok((mo.m.C0.LookVector - mo.base.LookVector).Magnitude > 0.1 or (mo.m.C0.UpVector - mo.base.UpVector).Magnitude > 0.1, "joint posed")
+		end
+		pose:stop()
+		for _, mo in motors do
+			ok(mo.m.C0 == mo.base, "joint restored exactly")
+		end
+		pose:stop() -- twice is safe
+	end
+	local empty = R.Instance.new("Model")
+	local pose = TrainPose.new(empty)
+	pose:apply(1, 1)
+	pose:stop()
+	near(TrainPose.phase(0), 0, 1e-9, "rep starts low")
+	near(TrainPose.phase(TrainPose.Period / 2), 1, 1e-9, "top of the rep")
+end)
+
+test("training sessions: tap to start, Stop / Q / move / panel / throw / respawn end it", function()
+	ok(clientSrc:find("trainSession = true -- a quick tap keeps training going until Stop", 1, true), "tap starts a session")
+	ok(clientSrc:find("if trainSession then\n\t\tstopTraining() -- a tap on Stop / Q ends the session", 1, true), "second tap stops")
+	ok(clientSrc:find("(trainSession and moving) or hud.panels:isOpen() or fx:isPlaying()", 1, true), "moving, panels and cutscenes stop it")
+	ok(clientSrc:find("if trainHeld or trainSession then\n\t\tstopTraining()\n\tend", 1, true), "throwing stops it")
+	ok(clientSrc:find("TrainPose.MaxSession", 1, true), "sessions pause on their own")
+	local onChar = clientSrc:match("local function onCharacter.-\nend")
+	ok(onChar and onChar:find("stopTraining()", 1, true), "respawn ends training")
+	local hudSrc = SP.StarterPlayerScripts.Client.Hud.Source
+	ok(hudSrc:find('UI.setButton(self.trainBtn, "Stop", "danger")', 1, true), "Train becomes a red Stop")
+	-- The bar is real: level from trainGain, progress to the next level.
+	local Gui = require("./gui")
+	local built = Gui.build(placePath, "training", R.Vector2.new(1280, 720), false)
+	local hud = built.hud
+	ok(hud.trainBar.Visible and not hud.meter.Visible, "training bar replaces the meter")
+	ok(hud.trainLevelText.Text:find("+" .. GameMath.trainGain(built.state.strength) * GameConfig.GymMultiplier, 1, true), "Gym per-rep gain shown")
+	hud:setTraining(false, built.state.strength)
+	ok(not hud.trainBar.Visible, "bar hidden after Stop")
+end)
+
+test("world: zone boundary bands, aim line, plot capacity signs, real snacks on the stall", function()
+	local root = game:GetService("Workspace").SnackWorld
+	local WorldBuilder = req(Server.WorldBuilder)
+	for _, b in BiomeConfig.Biomes do
+		local bf = root.Biomes[b.id]
+		if b.order > 1 then
+			local line = bf:FindFirstChild("ZoneLine")
+			ok(line, b.id .. " zone line")
+			local z0 = bf.Ground.CFrame.Position.Z - (b.startDistance + b.endDistance) / 2
+			near(line.CFrame.Position.Z, z0 + b.startDistance, 0.01, b.id .. " zone line at the boundary")
+			ok(line.Size.X >= WorldBuilder.LaneHalf * 2 - 0.1, "spans the lane")
+			ok(line.Size.Y <= 0.2 and not line.CanCollide, "flat, never blocks")
+		end
+		local aim = bf:FindFirstChild("AimLine")
+		ok(aim and #aim:GetChildren() > 3, b.id .. " aim line")
+		for _, d in aim:GetChildren() do
+			ok(math.abs(d.CFrame.Position.X) < 1 and d.Size.Y <= 0.2 and not d.CanCollide, "aim dash in the lane centre, flat")
+		end
+	end
+	local stall = root.SpawnHub:FindFirstChild("FoodShopStall", true)
+	local shown = 0
+	for _, food in FoodConfig.Foods do
+		if stall:FindFirstChild("Display" .. food.id) then
+			shown += 1
+		end
+	end
+	eq(shown, #FoodConfig.Foods, "every snack on display")
+	local PlotService = req(Server.PlotService)
+	eq(PlotService.signText(86, 6, 8), "+86 / sec  ·  6/8 pets")
+end)
+
+test("screenshot audit: every supplied reference analysed, honest evidence labels", function()
+	local fs = require("@lune/fs")
+	local text = fs.readFile("docs/SCREENSHOT_AUDIT.md")
+	local n = 0
+	for _ in text:gmatch("\n## %d+%. ") do
+		n += 1
+	end
+	eq(n, 11, "one section per supplied screenshot")
+	for _, word in { "Observed", "Inferred", "Transfer", "Avoid", "Implemented", "Acceptance" } do
+		local count = 0
+		for _ in text:gmatch("%*%*" .. word) do
+			count += 1
+		end
+		ok(count >= 11, word .. " missing in some sections")
+	end
+	ok(text:find("not runtime-tested", 1, true), "states the runtime limit")
+	ok(not text:find("r157nlkQwz4", 1, true) and not text:find("youtu", 1, true), "excluded video absent")
 end)
 
 print(string.format("\n%d passed, %d failed", passed, failed))

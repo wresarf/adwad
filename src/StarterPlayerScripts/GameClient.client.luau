@@ -27,6 +27,7 @@ local Hud = require(ClientModules:WaitForChild("Hud"))
 local Effects = require(ClientModules:WaitForChild("Effects"))
 local UI = require(ClientModules:WaitForChild("UI"))
 local Sound = require(ClientModules:WaitForChild("Sound"))
+local TrainPose = require(ClientModules:WaitForChild("TrainPose"))
 
 local ThrowFood = Remotes:WaitForChild("ThrowFood") :: RemoteEvent
 local TrainStrength = Remotes:WaitForChild("TrainStrength") :: RemoteEvent
@@ -149,6 +150,14 @@ local chargeStart = 0
 local lastRelease = 0
 local trainHeld = false
 local lastTrain = 0
+-- Training: hold Train / Q (release stops), or tap it to start a session that runs until
+-- Stop, Q, moving, opening a panel, throwing, a cutscene or a respawn ends it.
+local trainSession = false
+local trainPressAt = 0
+local trainStartedAt = 0
+local pose: any = nil
+local TAP_SECONDS = 0.3
+local stopTraining: () -> () -- defined with the training functions below
 -- The pointer/touch that started a THROW or TRAIN press. Only that same input releases
 -- it, so lifting another finger (e.g. off the thumbstick) never fires the throw early.
 local throwInput: InputObject? = nil
@@ -184,6 +193,9 @@ local function throwDown(input: InputObject?)
 	if fx and fx:isPlaying() then
 		fx:skip()
 		return
+	end
+	if trainHeld or trainSession then
+		stopTraining()
 	end
 	if charging then
 		return
@@ -230,15 +242,53 @@ local function train()
 	UI.pop(hud.trainBtn)
 end
 
+stopTraining = function()
+	local was = trainHeld or trainSession
+	trainHeld = false
+	trainSession = false
+	trainInput = nil
+	if pose then
+		pose:stop()
+		pose = nil
+	end
+	if was and hud then
+		hud:setTraining(false, state.strength)
+	end
+end
+
 local function trainDown(input: InputObject?)
+	if trainSession then
+		stopTraining() -- a tap on Stop / Q ends the session
+		return
+	end
+	if hud.panels:isOpen() or (fx and fx:isPlaying()) then
+		return
+	end
 	trainHeld = true
 	trainInput = input
+	trainPressAt = os.clock()
+	if not pose then
+		local character = player.Character
+		if character then
+			pose = TrainPose.new(character)
+			trainStartedAt = os.clock()
+		end
+	end
+	hud:setTraining(true, state.strength)
 	train()
 end
 
 local function trainUp()
+	if not trainHeld then
+		return
+	end
 	trainHeld = false
 	trainInput = nil
+	if os.clock() - trainPressAt < TAP_SECONDS then
+		trainSession = true -- a quick tap keeps training going until Stop
+	else
+		stopTraining()
+	end
 end
 
 local function sameInput(held: InputObject?, input: InputObject): boolean
@@ -253,6 +303,9 @@ local function sameInput(held: InputObject?, input: InputObject): boolean
 end
 
 local function skip()
+	if hud and hud:dismissReveal() then
+		return
+	end
 	if fx then
 		fx:skip()
 	end
@@ -327,6 +380,8 @@ local function updateGuide()
 		hint = "Loading"
 	elseif charging then
 		hint = if GameMath.isSweetSpot(GameMath.chargeAt(now - chargeStart)) then "Release now" else "Release to throw"
+	elseif trainSession then
+		hint = if UserInputService.TouchEnabled then "Training · tap Stop to finish" else "Training · press Q or Stop to finish"
 	elseif gym then
 		hint = "Hold to train · 2x in the Gym"
 	elseif near and (state.totalThrows or 0) < 3 then
@@ -367,7 +422,7 @@ local HOTKEYS: { [Enum.KeyCode]: string } = {
 
 table.insert(connections, UserInputService.InputBegan:Connect(function(input, processed)
 	if input.KeyCode == Enum.KeyCode.Space or input.KeyCode == Enum.KeyCode.Return then
-		if fx:isPlaying() then
+		if fx:isPlaying() or hud.card.Visible then
 			skip()
 		end
 		return
@@ -422,8 +477,26 @@ table.insert(connections, RunService.RenderStepped:Connect(function()
 		throwUp()
 		charge = nil
 	end
-	if trainHeld and now - lastTrain >= GameConfig.TrainRepeat then
-		train()
+	if trainHeld or trainSession then
+		-- Sessions end on their own when something else takes over.
+		local character = player.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		local moving = humanoid ~= nil and humanoid.MoveDirection.Magnitude > 0.1
+		if (trainSession and moving) or hud.panels:isOpen() or fx:isPlaying() or humanoid == nil or humanoid.Health <= 0 then
+			stopTraining()
+		elseif trainSession and now - trainStartedAt > TrainPose.MaxSession then
+			-- Sessions pause after a few minutes, so training is never left running unattended.
+			stopTraining()
+			hud:toast("Training paused · tap Train to keep going", UI.Colors.Teal)
+		else
+			if now - lastTrain >= GameConfig.TrainRepeat then
+				train()
+			end
+			if pose then
+				local reduced = UI.reducedMotion()
+				pose:apply(if reduced then 1 else TrainPose.phase(now - trainStartedAt), math.min((now - trainStartedAt) / 0.2, 1))
+			end
+		end
 	end
 	-- Charge feedback: a rising tick every tenth of the meter, a chime entering Sweet.
 	if charge then
@@ -538,8 +611,10 @@ local function onCharacter(character: Model)
 		throwInput = nil
 		fx:setCharging(nil)
 	end
-	trainHeld = false
-	trainInput = nil
+	if pose then
+		pose.joints = {} -- the old character's joints are gone; nothing to restore
+	end
+	stopTraining()
 	local humanoid = character:WaitForChild("Humanoid", 10)
 	local camera = Workspace.CurrentCamera
 	if camera and humanoid and humanoid:IsA("Humanoid") then
@@ -554,6 +629,7 @@ script.Destroying:Connect(function()
 	for _, c in connections do
 		c:Disconnect()
 	end
+	stopTraining()
 	fx:destroy()
 	hud:destroy()
 	sound:destroy()

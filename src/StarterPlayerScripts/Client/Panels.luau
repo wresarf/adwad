@@ -57,23 +57,32 @@ local PANEL_W, PANEL_H = 780, 540
 local PETS_W = 920 -- the Pets panel is wider to fit the selected-pet sheet
 local SHEET_W = 260
 
-local function shell(root: Instance, title: string, subtitle: string, onClose: () -> (), width: number?): Shell
+-- Every panel shares one frame: a tinted header band (title, one-line subtitle, the
+-- balance that matters here and a distinct close button), a toolbar row and a body.
+local HEADER_H = 84
+local function shell(root: Instance, title: string, subtitle: string, onClose: () -> (), width: number?, accent: Color3?): Shell
 	local w = width or PANEL_W
 	local frame = UI.surface(root, UDim2.fromOffset(w, PANEL_H), UDim2.new(0.5, -w / 2, 0.5, -PANEL_H / 2 + 8), C.Ivory, UI.Radius.l)
 	frame.Visible = false
 	frame.Active = true -- taps on the panel must not reach the Throw / Train buttons below
 	frame.ZIndex = 10
 	frame.Name = title
-	UI.text(frame, title, UDim2.new(1, -200, 0, 40), UDim2.fromOffset(24, 14), { size = T.Display, font = UI.Display })
-	local sub = UI.text(frame, subtitle, UDim2.new(1, -200, 0, 22), UDim2.fromOffset(24, 54), { size = T.Small, color = C.Muted, font = UI.FontMedium })
-	local balance = UI.tag(frame, "", C.Paper, C.Charcoal, UDim2.new(1, -76, 0, 24))
+	local band = UI.new("Frame", { Name = "Header", Size = UDim2.new(1, 0, 0, HEADER_H), BackgroundColor3 = accent or C.Sand, BorderSizePixel = 0, Parent = frame })
+	UI.corner(band, UI.Radius.l)
+	-- Square off the band's bottom corners so it meets the body in a straight line.
+	UI.new("Frame", { Name = "HeaderFill", Size = UDim2.new(1, 0, 0, UI.Radius.l), Position = UDim2.new(0, 0, 1, -UI.Radius.l), BackgroundColor3 = accent or C.Sand, BorderSizePixel = 0, Parent = band })
+	UI.new("Frame", { Name = "HeaderRule", Size = UDim2.new(1, 0, 0, 2), Position = UDim2.fromOffset(0, HEADER_H), BackgroundColor3 = C.Line, BackgroundTransparency = 0.3, BorderSizePixel = 0, Parent = frame })
+	UI.text(frame, title, UDim2.new(1, -200, 0, 40), UDim2.fromOffset(24, 12), { size = T.Display, font = UI.Display })
+	local sub = UI.text(frame, subtitle, UDim2.new(1, -260, 0, 22), UDim2.fromOffset(24, 52), { size = T.Small, color = C.Muted, font = UI.FontMedium, wrap = false })
+	local balance = UI.tag(frame, "", C.Paper, C.Charcoal, UDim2.new(1, -80, 0, 20))
 	balance.AnchorPoint = Vector2.new(1, 0)
 	balance.Size = UDim2.fromOffset(0, 32)
 	balance.TextSize = T.Body
 	balance.Visible = false
-	local close = UI.button(frame, "✕", "ghost", UDim2.fromOffset(48, 48), UDim2.new(1, -64, 0, 16))
+	local close = UI.button(frame, "✕", "danger", UDim2.fromOffset(52, 52), UDim2.new(1, -66, 0, 14))
+	close.Name = "Close"
 	close.Activated:Connect(onClose)
-	local toolbar = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -48, 0, 52), Position = UDim2.fromOffset(24, 86), Parent = frame })
+	local toolbar = UI.new("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, -48, 0, 46), Position = UDim2.fromOffset(24, HEADER_H + 10), Parent = frame })
 	local body = UI.new("ScrollingFrame", {
 		Size = UDim2.new(1, -36, 1, -152),
 		Position = UDim2.fromOffset(24, 142),
@@ -145,7 +154,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	end
 
 	------------------------------------------------ snacks (earned upgrades)
-	local shop = shell(root, "Snack Shop", "Better snacks fly further and add a little luck.", close)
+	local shop = shell(root, "Snack Shop", "Better snacks fly further and add a little luck.", close, nil, C.AmberSoft)
 	UI.list(shop.body, 8)
 	-- Two tabs over one list: snacks and permanent coin upgrades.
 	self.shopTab = "Snacks"
@@ -163,22 +172,40 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	self.shopHint = UI.text(shop.toolbar, "", UDim2.new(1, -310, 1, 0), UDim2.fromOffset(306, 0), { size = T.Small, color = C.Muted, font = UI.FontMedium })
 	self.shopRows = {}
 	self.snackRowsList = {}
+	-- Snacks are product cards: a large 3D preview first, then name, craving and stats,
+	-- and one state button (Equipped / Equip / Buy / locked with progress). The grid's
+	-- cell size follows the panel width (Panels:fit), so cards never clip at the edges.
+	local grid = UI.new("Frame", { Name = "SnackGrid", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 1, Parent = shop.body })
+	self.snackGridLayout = UI.new("UIGridLayout", { CellSize = UDim2.fromOffset(170, 268), CellPadding = UDim2.fromOffset(12, 12), SortOrder = Enum.SortOrder.LayoutOrder, Parent = grid })
+	table.insert(self.snackRowsList, grid)
 	for i, food in FoodConfig.Foods do
-		local r = row(shop.body, 84, i)
-		table.insert(self.snackRowsList, r)
-		local swatch = UI.new("Frame", { Size = UDim2.fromOffset(56, 56), Position = UDim2.fromOffset(14, 14), BackgroundColor3 = food.color, Parent = r })
-		UI.corner(swatch, if food.shape == "Block" then 12 else 28)
-		UI.text(swatch, FoodConfig.CravingIcons[food.craving] or "", UDim2.fromScale(1, 1), nil, { size = T.Title, align = Enum.TextXAlignment.Center })
-		UI.text(r, food.name, UDim2.new(1, -330, 0, 26), UDim2.fromOffset(84, 10), { size = T.Label, font = UI.FontHeavy })
-		UI.text(r, string.format("Craves %s · Power x%.2f · Luck x%.2f", food.craving, food.power, food.luck), UDim2.new(1, -330, 0, 20), UDim2.fromOffset(84, 36), { size = T.Small, color = C.Muted, font = UI.FontMedium })
-		UI.text(r, food.description, UDim2.new(1, -330, 0, 20), UDim2.fromOffset(84, 56), { size = T.Caption, color = C.Muted, font = UI.FontMedium })
-		local buy = UI.button(r, "", "primary", UDim2.fromOffset(200, 48), UDim2.new(1, -214, 0, 10))
+		local card = UI.surface(grid, UDim2.new(), nil, C.Paper, UI.Radius.m)
+		card.LayoutOrder = i
+		card.Name = food.id
+		local art = UI.new("Frame", { Name = "Art", Size = UDim2.new(1, -12, 0, 112), Position = UDim2.fromOffset(6, 6), BackgroundColor3 = C.Ivory:Lerp(food.color, 0.16), BorderSizePixel = 0, Parent = card })
+		UI.corner(art, UI.Radius.s)
+		UI.new("UIGradient", { Rotation = 90, Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(226, 218, 204)), Parent = art })
+		UI.foodViewport(art, food.id, UDim2.fromScale(1, 1), UDim2.new())
+		local cc = FoodConfig.CravingColors[food.craving] or C.Muted
+		local craveTag = UI.tag(art, (FoodConfig.CravingIcons[food.craving] or "") .. " " .. food.craving, C.Paper, cc:Lerp(C.Charcoal, 0.45), UDim2.fromOffset(6, 6))
+		craveTag.Name = "Craving"
+		craveTag.ZIndex = 2
+		local equippedTag = UI.tag(art, "Equipped", C.Leaf, C.OnColor, UDim2.new(1, -6, 1, -6))
+		equippedTag.AnchorPoint = Vector2.new(1, 1)
+		equippedTag.ZIndex = 2
+		equippedTag.Visible = false
+		local nameLabel = UI.text(card, food.name, UDim2.new(1, -16, 0, 22), UDim2.fromOffset(8, 122), { size = T.Small, font = UI.FontHeavy, wrap = false, name = "FoodName" })
+		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		local stats = UI.text(card, string.format("Power x%.2f · Luck x%.2f", food.power, food.luck), UDim2.new(1, -16, 0, 18), UDim2.fromOffset(8, 146), { size = T.Caption, color = C.Muted, font = UI.FontMedium, wrap = false, name = "Stats" })
+		local desc = UI.text(card, food.description, UDim2.new(1, -16, 0, 34), UDim2.fromOffset(8, 166), { size = T.Caption, color = C.Muted, font = UI.FontMedium, alignY = Enum.TextYAlignment.Top, name = "Desc" })
+		local buy = UI.button(card, "", "primary", UDim2.new(1, -16, 0, 44), UDim2.new(0, 8, 1, -52), T.Body)
+		buy.Name = "Action"
 		buy.Activated:Connect(function()
 			run("BuyFood", food.id)
 		end)
-		local bar, fill, barText = UI.progressBar(r, UDim2.fromOffset(200, 14), UDim2.new(1, -214, 0, 62), C.Amber)
+		local bar, fill, barText = UI.progressBar(card, UDim2.new(1, -16, 0, 8), UDim2.new(0, 8, 1, -62), C.Amber)
 		barText.Visible = false
-		self.shopRows[food.id] = { button = buy, fill = fill, bar = bar, barText = barText, row = r }
+		self.shopRows[food.id] = { button = buy, fill = fill, bar = bar, barText = barText, row = card, equippedTag = equippedTag, art = art, desc = desc, stats = stats }
 	end
 	self.upgradeRows = {}
 	for i, upgrade in UpgradeConfig.Upgrades do
@@ -207,7 +234,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	add("Shop", shop)
 
 	------------------------------------------------ eggs (earn-only)
-	local eggs = shell(root, "Safari Eggs", "Exclusive pets you can't catch by throwing.", close)
+	local eggs = shell(root, "Safari Eggs", "Exclusive pets you can't catch by throwing.", close, nil, C.TealSoft)
 	UI.list(eggs.body, 12)
 	UI.text(eggs.toolbar, string.format("Paw Tokens are earned by playing: +%d per quest, +%d per new zone, +%d per new species, +%d every %d catches. They can't be bought.", EggConfig.TokenRewards.Quest, EggConfig.TokenRewards.ZoneFirst, EggConfig.TokenRewards.NewSpecies, EggConfig.TokenRewards.CatchMilestone, EggConfig.CatchMilestoneEvery), UDim2.fromScale(1, 1), nil, { size = T.Small, color = C.Muted, font = UI.FontMedium })
 	self.eggRows = {}
@@ -262,25 +289,22 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	add("Eggs", eggs)
 
 	------------------------------------------------ pets
-	local pets = shell(root, "Your Pets", "", close, PETS_W)
+	local pets = shell(root, "Your Pets", "", close, PETS_W, C.LeafSoft)
 	pets.body.Size = UDim2.new(1, -(36 + SHEET_W + 12), 1, -152)
 	local function barButton(text: string, style: string, x: number, w: number, fn: () -> ()): TextButton
 		local b = UI.button(pets.toolbar, text, style, UDim2.fromOffset(w, 46), UDim2.fromOffset(x, 0), T.Small)
 		b.Activated:Connect(fn)
 		return b
 	end
-	barButton("Equip best", "primary", 0, 130, function()
-		run("EquipBest")
-	end)
-	barButton("Fuse all", "secondary", 138, 106, function()
+	barButton("Fuse all", "secondary", 0, 106, function()
 		run("FusePets", "ALL")
 	end)
-	self.autoSellButton = barButton("Auto-sell: Off", "secondary", 252, 168, function()
+	self.autoSellButton = barButton("Auto-sell: Off", "secondary", 114, 168, function()
 		local st = self.state
 		local current = if st and st.settings then st.settings.AutoSellRarity else "Off"
 		run("AutoSell", cycle(AUTO_SELL_OPTIONS, current), false)
 	end)
-	barButton("Sell matching", "secondary", 428, 140, function()
+	barButton("Sell matching", "secondary", 290, 140, function()
 		local st = self.state
 		local current = if st and st.settings then st.settings.AutoSellRarity else "Off"
 		if current == "Off" then
@@ -289,13 +313,13 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 		end
 		run("AutoSell", current, true)
 	end)
-	self.sortButton = barButton("Sort: Income", "ghost", 576, 150, function()
+	self.sortButton = barButton("Sort: Income", "ghost", 438, 150, function()
 		self.sort = cycle(SORTS, self.sort)
 		if self.state then
 			self:refreshPets(self.state)
 		end
 	end)
-	self.filterButton = barButton("Show: All", "ghost", 734, 132, function()
+	self.filterButton = barButton("Show: All", "ghost", 596, 132, function()
 		self.filter = cycle(PetList.Filters, self.filter)
 		if self.state then
 			self:refreshPets(self.state)
@@ -311,7 +335,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	-- Selected-pet sheet (right column): details and the actions for one group.
 	-- Scrolls on short screens; the content is a fixed 346-unit column.
 	local sheet = UI.new("ScrollingFrame", {
-		Size = UDim2.new(0, SHEET_W, 1, -158),
+		Size = UDim2.new(0, SHEET_W, 1, -(158 + 62)),
 		Position = UDim2.new(1, -(SHEET_W + 20), 0, 142),
 		BackgroundColor3 = C.Paper,
 		BorderSizePixel = 0,
@@ -382,6 +406,14 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 			self:renderSheet()
 		end
 	end)
+	-- Equip best: the one-tap answer to "is my plot as good as it can be?", anchored
+	-- under the sheet so it is always in the same place, whatever is selected.
+	local equipBest = UI.button(pets.frame, "Equip best", "reward", UDim2.fromOffset(SHEET_W, 54), UDim2.new(1, -(SHEET_W + 20), 1, -70), T.Label)
+	equipBest.Name = "EquipBest"
+	equipBest.Activated:Connect(function()
+		run("EquipBest")
+	end)
+	self.equipBestButton = equipBest
 	add("Pets", pets)
 
 	------------------------------------------------ index
@@ -393,7 +425,7 @@ function Panels.new(root: Instance, ctx: any, hud: any)
 	add("Index", index)
 
 	------------------------------------------------ store (Robux + Gems)
-	local store = shell(root, "Store", "Optional extras. The whole game is playable without them.", close)
+	local store = shell(root, "Store", "Optional extras. The whole game is playable without them.", close, nil, C.AmberSoft)
 	UI.list(store.body, 8)
 	UI.text(store.toolbar, "Gems only buy the exact items shown. They can't buy eggs, coins, tokens or luck.", UDim2.fromScale(1, 1), nil, { size = T.Small, color = C.Muted, font = UI.FontMedium })
 	self.storeList = store.body
@@ -519,6 +551,32 @@ function Panels:fit(logical: Vector2)
 		sh.frame.Size = UDim2.fromOffset(w, h)
 		sh.frame.Position = UDim2.new(0.5, -w / 2, 0, y)
 	end
+	local shop = self.shells.Shop
+	if shop then
+		local layout = Panels.snackGrid(math.min(shop.width, logical.X - 24), math.min(PANEL_H, logical.Y - 64))
+		self.snackGridLayout.CellSize = UDim2.fromOffset(layout.cellW, layout.cellH)
+		self.snackCompact = layout.compact
+		for _, r in self.shopRows do
+			r.art.Size = UDim2.new(1, -12, 0, layout.artH)
+			r.row:FindFirstChild("FoodName").Position = UDim2.fromOffset(8, layout.artH + 10)
+			r.stats.Position = UDim2.fromOffset(8, layout.artH + 34)
+			r.desc.Position = UDim2.fromOffset(8, layout.artH + 54)
+			r.desc.Visible = not layout.compact
+		end
+	end
+end
+
+-- Snack card grid for a panel size: whole cards only (no clipped side cards), at least
+-- 150 wide, 4 columns on a full panel and 3 on narrow ones; shorter cards on short
+-- screens so a full row stays visible without scrolling.
+function Panels.snackGrid(panelW: number, panelH: number): { cols: number, cellW: number, cellH: number, artH: number, compact: boolean }
+	local inner = panelW - 36 - 14 -- body inset + its right padding / scrollbar
+	local gap = 12
+	local cols = math.clamp(math.floor((inner + gap) / (150 + gap)), 2, 4)
+	local cellW = math.floor((inner - gap * (cols - 1)) / cols)
+	local compact = panelH < 460
+	local artH = if compact then 84 else 112
+	return { cols = cols, cellW = cellW, cellH = artH + (if compact then 120 else 156), artH = artH, compact = compact }
 end
 
 function Panels:isOpen(): boolean
@@ -566,7 +624,8 @@ function Panels:refresh(state: any, full: boolean?)
 		local food = FoodConfig.get(id)
 		if food then
 			local showBar = false
-			if state.equippedFood == id then
+			local equipped = state.equippedFood == id
+			if equipped then
 				UI.setButton(r.button, "Equipped ✓", "ghost")
 			elseif owned[id] then
 				UI.setButton(r.button, "Equip", "secondary")
@@ -580,6 +639,14 @@ function Panels:refresh(state: any, full: boolean?)
 				end
 			end
 			r.bar.Visible = showBar
+			-- Equipped: green edge + tag (not colour alone: the tag and button say it too).
+			r.equippedTag.Visible = equipped
+			local stroke = r.row:FindFirstChildOfClass("UIStroke")
+			if stroke then
+				stroke.Color = if equipped then C.Leaf else C.Line
+				stroke.Thickness = if equipped then 3 else 1
+				stroke.Transparency = if equipped then 0 else 0.2
+			end
 		end
 	end
 	if not self.shopTab or self.shopHint.Text == "" then
@@ -677,7 +744,16 @@ function Panels:refreshPets(state: any)
 	end
 	local order = PetList.view(all, self.filter, self.sort)
 	UI.setButton(self.filterButton, "Show: " .. self.filter)
-	self.petCountLabel.Text = string.format("%d / %d in backpack · %d / %d on your plot", #(state.pets or {}), state.maxPets or GameConfig.MaxPets, equippedCount, state.slots or GameConfig.PlotPedestals)
+	local held, cap = #(state.pets or {}), state.maxPets or GameConfig.MaxPets
+	local slots = state.slots or GameConfig.PlotPedestals
+	self.petCountLabel.Text = string.format("%d / %d on your plot · %d species groups", equippedCount, slots, #all)
+	-- Capacity lives in the header pill; it turns warm when the backpack is (nearly) full.
+	local balance = self.shells.Pets.balance
+	balance.Visible = true
+	balance.Text = string.format("🎒 %d / %d", held, cap)
+	balance.BackgroundColor3 = if held >= cap then C.TerracottaSoft elseif held >= cap * 0.9 then C.AmberSoft else C.Paper
+	local upgrade = PetList.upgradeAvailable(state.pets or {}, slots)
+	UI.setButton(self.equipBestButton, if upgrade then "Equip best ▲" else "Equip best", if upgrade then "reward" else "secondary")
 
 	self.petCards = {}
 	self.groups = groups

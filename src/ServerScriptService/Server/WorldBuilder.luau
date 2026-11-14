@@ -13,8 +13,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Config = ReplicatedStorage:WaitForChild("Config")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local BiomeConfig = require(Config:WaitForChild("BiomeConfig"))
+local FoodConfig = require(Config:WaitForChild("FoodConfig"))
 local GameConfig = require(Config:WaitForChild("GameConfig"))
 local PetModelBuilder = require(Shared:WaitForChild("PetModelBuilder"))
+local FoodModelBuilder = require(Shared:WaitForChild("FoodModelBuilder"))
 
 export type PlotInfo = {
 	index: number,
@@ -24,6 +26,7 @@ export type PlotInfo = {
 	incomeLabel: TextLabel,
 	pedestals: { Part },
 	petsFolder: Folder,
+	petCount: number?, -- equipped pets shown (PlotService keeps the sign in sync)
 	spawnCFrame: CFrame,
 }
 
@@ -777,15 +780,18 @@ end
 local function buildShopStall(parent: Instance)
 	local s = folder("FoodShopStall", parent)
 	local counter, cf = stall(s, Vector3.new(42, 0, -95), Vector3.new(-1, 0, 0), { counterName = "ShopCounter", stripe = C.terracotta, sign = "FOOD SHOP", sub = "Snacks for stronger throws" })
-	-- Giant toy snacks on the counter (counter top at y = 4.3).
+	-- The real snack models on the counter (the same FoodModelBuilder shapes as the shop
+	-- cards and the thrown snack), first four up front and the rest on a riser behind them.
 	local y = 4.3
-	blob(s, "GiantBerry", Vector3.new(1.8, 1.8, 1.8), cf * CFrame.new(-4, y + 0.85, -3.2), C.rose)
-	blob(s, "BerryLeaf", Vector3.new(0.9, 0.3, 0.6), cf * CFrame.new(-4, y + 1.8, -3.2), C.leaf)
-	rod(s, "GiantBone", (cf * CFrame.new(-1, y + 0.45, -3.2)).Position, 2.6, 0.7, "Z", C.cream)
-	blob(s, "BoneKnob", Vector3.new(1.1, 1.0, 1.1), cf * CFrame.new(-2.3, y + 0.5, -3.2), C.cream)
-	blob(s, "BoneKnob", Vector3.new(1.1, 1.0, 1.1), cf * CFrame.new(0.3, y + 0.5, -3.2), C.cream)
-	blob(s, "GiantChili", Vector3.new(2.4, 1.0, 1.0), cf * CFrame.new(2.4, y + 0.5, -3.2) * CFrame.Angles(0, 0, 0.15), C.terracotta)
-	makePart({ name = "GiantCookie", shape = Enum.PartType.Cylinder, size = Vector3.new(0.5, 2, 2), cframe = cf * CFrame.new(4.6, y + 1, -3.2) * CFrame.Angles(0, math.pi / 2, 0), color = C.amber, parent = s })
+	block(s, "SnackRiser", Vector3.new(11, 0.7, 1.4), cf * CFrame.new(0, y + 0.35, -1.9), C.woodLight, SM.WoodPlanks)
+	for i, food in FoodConfig.Foods do
+		local front = i <= 4
+		local x = -4.2 + ((i - 1) % 4) * 2.8
+		local at = if front then cf * CFrame.new(x, y + 0.95, -3.4) else cf * CFrame.new(x + 1.2, y + 1.5, -1.9)
+		local model = FoodModelBuilder.build(food.id, at * CFrame.Angles(0, math.rad(-20), 0), if front then 1.15 else 0.9)
+		model.Name = "Display" .. food.id
+		model.Parent = s
+	end
 	-- Crates of snacks beside the stall.
 	local c1 = crate(s, cf * CFrame.new(-9, 1.5, -2), 3)
 	crate(s, cf * CFrame.new(-9.2, 4.0, -2) * CFrame.Angles(0, 0.3, 0), 2)
@@ -1291,6 +1297,15 @@ local function buildBiomes(root: Instance)
 			for _, sx in { -1, 1 } do
 				gatePylon(bf, Vector3.new(sx * (lane + 5), 0, edge), style, sx)
 			end
+			-- Zone boundary: a painted band across the whole lane in the new biome's colour,
+			-- so where one zone ends reads from the throw line and from the follow camera.
+			makePart({ name = "ZoneLine", size = Vector3.new(lane * 2, 0.14, 2.4), cframe = CFrame.new(0, 0.08, edge), color = style.tag:Lerp(C.ivory, 0.15), canCollide = false, castShadow = false, parent = bf })
+			makePart({ name = "ZoneLineEdge", size = Vector3.new(lane * 2, 0.13, 0.6), cframe = CFrame.new(0, 0.075, edge + 1.9), color = C.ivory, transparency = 0.25, canCollide = false, castShadow = false, parent = bf })
+		end
+		-- A faint dashed centre line down the lane: the aim line the snack follows.
+		local aim = folder("AimLine", bf)
+		for z = biome.startDistance + 10, biome.endDistance - 10, 24 do
+			makePart({ name = "AimDash", size = Vector3.new(0.7, 0.1, 7), cframe = CFrame.new(0, 0.06, Z0 + z), color = C.ivory, transparency = 0.55, canCollide = false, castShadow = false, parent = aim })
 		end
 
 		-- Small entry signs beside the lane on both sides, facing the throw line.

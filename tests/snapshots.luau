@@ -1,6 +1,7 @@
 --!nocheck
 -- Dev tool: renders review images of the built place without Roblox Studio.
 --   lune run tests/snapshots.luau pets  <out.svg>            every species, 3/4 view
+--   lune run tests/snapshots.luau foods <out.svg>            every snack, shop camera
 --   lune run tests/snapshots.luau world <out.svg> ex ey ez tx ty tz [fov] [w] [h]
 -- Images are approximations from tests/render3d.luau (see its header), not screenshots.
 local fs = require("@lune/fs")
@@ -31,6 +32,23 @@ if mode == "pets" then
 	table.insert(parts, "</svg>")
 	fs.writeFile(out, table.concat(parts, "\n"))
 	print("pets", #PetConfig.Pets)
+elseif mode == "foods" then
+	local FoodConfig = Runtime.requireModule(RS.Config.FoodConfig)
+	local Builder = Runtime.requireModule(RS.Shared.FoodModelBuilder)
+	local cols, cell = 4, 220
+	local rows = math.ceil(#FoodConfig.Foods / cols)
+	local parts = { string.format('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d"><rect width="100%%" height="100%%" fill="#f6efe0"/>', cols * cell, rows * (cell + 24)) }
+	for i, food in FoodConfig.Foods do
+		local model = Builder.build(food.id, R.CFrame.new(), 1)
+		local cf, fov = Builder.portraitCamera()
+		local cam = Render3D.camera(cf.Position, cf.Position + cf.LookVector * 10, fov, cell, cell)
+		local body = Render3D.render({ model }, cam, { roblox = R })
+		local x, y = ((i - 1) % cols) * cell, ((i - 1) // cols) * (cell + 24)
+		table.insert(parts, string.format('<g transform="translate(%d,%d)"><rect x="6" y="6" width="%d" height="%d" rx="14" fill="#fcf9f2" stroke="#d2c4a8"/>%s<text x="%d" y="%d" font-family="sans-serif" font-size="14" font-weight="700" text-anchor="middle" fill="#2e2a26">%s</text></g>', x, y, cell - 12, cell - 12, body, cell / 2, cell + 14, food.name))
+	end
+	table.insert(parts, "</svg>")
+	fs.writeFile(out, table.concat(parts, "\n"))
+	print("foods", #FoodConfig.Foods)
 elseif mode == "world" then
 	local WB = Runtime.requireModule(game:GetService("ServerScriptService").Server.WorldBuilder)
 	WB.build(game:GetService("Workspace"))

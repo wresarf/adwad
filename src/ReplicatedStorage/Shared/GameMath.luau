@@ -170,6 +170,32 @@ function GameMath.pickPet(rng: Rng, zoneId: string, foodCraving: string): PetCon
 	return pool[#pool]
 end
 
+-- What the luck HUD shows, using exactly computeThrow's formula. The combo part depends
+-- on where the snack lands, so both outcomes are returned: `base` (no craving match:
+-- the streak resets) and `matched` (the streak grows). Sweet multiplies either one.
+export type LuckPreview = { base: number, matched: number, sizeBase: number, sizeMatched: number, sweet: number, nextCombo: number }
+function GameMath.luckPreview(foodLuck: number, streak: number, weatherMaterialLuck: number, weatherSizeLuck: number, weatherCravingBonus: number): LuckPreview
+	local nextCombo = GameMath.comboMultiplier(GameMath.nextStreak(streak, true, weatherCravingBonus))
+	local miss = GameMath.comboMultiplier(GameMath.nextStreak(streak, false, weatherCravingBonus))
+	return {
+		base = miss * weatherMaterialLuck * foodLuck,
+		matched = nextCombo * weatherMaterialLuck * foodLuck,
+		sizeBase = miss * weatherSizeLuck * foodLuck,
+		sizeMatched = nextCombo * weatherSizeLuck * foodLuck,
+		sweet = GameConfig.SweetSpotLuckMult,
+		nextCombo = nextCombo,
+	}
+end
+
+-- Training level: each level adds +1 strength per rep (trainGain). Returns the current
+-- per-rep gain and the strength at which the next level starts.
+function GameMath.trainLevel(strength: number): (number, number, number)
+	local gain = GameMath.trainGain(strength)
+	local prevAt = ((gain - 1) * 25) ^ 2
+	local nextAt = (gain * 25) ^ 2
+	return gain, prevAt, nextAt
+end
+
 function GameMath.computeThrow(p: ThrowParams, gusts: { number }?): ThrowResult
 	local charge = GameMath.clamp(p.charge, 0, 1)
 	local sweet = p.allowSweetSpot and GameMath.isSweetSpot(charge)
